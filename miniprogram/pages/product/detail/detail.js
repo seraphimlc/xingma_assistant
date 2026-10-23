@@ -95,10 +95,11 @@ Page({
       }
     }
     await this.load(q.id, shareEventId, boundCustomerId);
-    if (this.data.isStaff) {
-      try {
-        wx.showShareMenu({ withShareTicket: true, menus: ['shareAppMessage', 'shareTimeline'] });
-      } catch (e) { /* */ }
+    // 禁用右上角菜单分享：名额/策略只能经页内「发给微信好友」按钮在发卡前创建
+    try {
+      wx.hideShareMenu({ menus: ['shareAppMessage', 'shareTimeline'] });
+    } catch (e) {
+      try { wx.hideShareMenu(); } catch (e2) { /* */ }
     }
   },
   onShow() {
@@ -254,23 +255,27 @@ Page({
       ''
     );
   },
-  onShareAppMessage() {
+  onShareAppMessage(res) {
     const product = this.data.product || {};
     const title = (product.name || product.styleNo || '商品分享').trim();
     const imageUrl = this.shareCardImageUrl();
-    // 同步返回作占位；promise 解析后用落地页 path（带 shareId）
     const fallbackPath = `/pages/product/detail/detail?id=${this.data.id}`;
+    // 右上角菜单已 hide；若仍触发则不创建 share（无 shareId/slots）
+    if (!res || res.from !== 'button') {
+      return { title, path: fallbackPath, imageUrl: imageUrl || undefined };
+    }
+    // 页内 open-type=share：先按所选模式创建 share，再发卡
     return {
       title,
       path: fallbackPath,
       imageUrl: imageUrl || undefined,
       promise: this.ensureShareForNative()
-        .then((res) => {
-          const shareId = res.shareId;
+        .then((shareRes) => {
+          const shareId = shareRes.shareId;
           // 必须与 app.json 注册页一致：pages/share/landing/landing
           const path = shareId
             ? `/pages/share/landing/landing?shareId=${shareId}`
-            : (res.path || fallbackPath);
+            : (shareRes.path || fallbackPath);
           return { title, path, imageUrl: imageUrl || undefined };
         })
         .catch((err) => {
@@ -280,16 +285,13 @@ Page({
     };
   },
   onShareTimeline() {
+    // 朋友圈入口已 hideShareMenu；不经页内按钮，不创建 share
     const product = this.data.product || {};
     const title = (product.name || product.styleNo || '商品分享').trim();
     const imageUrl = this.shareCardImageUrl();
-    const open = this._shareCache && this._shareCache.open;
-    const query = open && open.shareId
-      ? `shareId=${open.shareId}`
-      : `id=${this.data.id}`;
     return {
       title,
-      query,
+      query: `id=${this.data.id}`,
       imageUrl: imageUrl || undefined,
     };
   },
