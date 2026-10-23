@@ -72,41 +72,45 @@ export function registerPublishProductHandler(
 
     const hasHangtag = (suggestion.images || []).some((i) => i.role === 'hangtag');
     const ocrStyleNo = String(suggestion.styleNo || '').trim();
-    const ocrMaterial = String(suggestion.material || '').trim();
+    const hangtagNameClear =
+      hasHangtag && !isWeakProductTitle(suggestion.name) && !String(job.input.name || '').trim();
+    // 规则：吊牌/OCR 有清晰品名 → 用之；否则（含无吊牌）用商品图 Vision 生成，禁止文件名/「款号 xxx」占位当最终名
     const needVisionTitle =
       !String(job.input.name || '').trim() &&
-      (!hasHangtag || (!ocrStyleNo && !ocrMaterial)) &&
+      !hangtagNameClear &&
       isWeakProductTitle(suggestion.name);
 
     let titleSource: TitleSuggestionSource =
       String(job.input.name || '').trim()
         ? 'input'
-        : hasHangtag && !isWeakProductTitle(suggestion.name)
+        : hangtagNameClear
           ? 'hangtag'
-          : ocrStyleNo && String(suggestion.name || '').startsWith('款号')
-            ? 'styleNo'
-            : 'fallback';
+          : 'fallback';
     let name = String(job.input.name || suggestion.name || '').trim();
     let subtitle = String(suggestion.subtitle || '').trim() || undefined;
 
     if (needVisionTitle) {
       await ctx.updateProgress({ percent: 50, step: 'title', message: 'Vision 生成标题' });
       const coverAsset = batch.assets.find((a) => a.mediaId === cover.coverId);
-      const mainAsset =
-        coverAsset ||
-        batch.assets.find((a) => {
-          const im = suggestion.images?.find((i) => i.mediaId === a.mediaId);
-          return im?.role === 'main';
-        }) ||
-        batch.assets[0];
-      const gen = await generateProductTitle(vision, mainAsset?.localPath || '', {
+      const titlePaths: string[] = [];
+      if (coverAsset?.localPath) titlePaths.push(coverAsset.localPath);
+      for (const a of batch.assets) {
+        const im = suggestion.images?.find((i) => i.mediaId === a.mediaId);
+        if (im?.role === 'hangtag') continue;
+        if (a.localPath && !titlePaths.includes(a.localPath)) titlePaths.push(a.localPath);
+      }
+      if (!titlePaths.length && batch.assets[0]?.localPath) {
+        titlePaths.push(batch.assets[0].localPath);
+      }
+      const gen = await generateProductTitle(vision, titlePaths.slice(0, 4), {
         styleNo: ocrStyleNo || undefined,
       });
       name = gen.title;
       if (gen.subtitle) subtitle = gen.subtitle;
       titleSource = gen.via === 'vision' ? 'vision' : 'fallback';
       logger.log(
-        `title jobId=${job.id} productId=${productId} via=${gen.via} name=${name} reason=${gen.reason}`,
+        `title jobId=${job.id} productId=${productId} via=${gen.via} name=${name} ` +
+          `hasHangtag=${hasHangtag} paths=${titlePaths.length} reason=${gen.reason}`,
       );
       if (gen.via !== 'vision') {
         reviewReasons.push('title_fallback');
@@ -119,7 +123,9 @@ export function registerPublishProductHandler(
       reviewReasons.push('empty_title_filled');
       logger.log(`title jobId=${job.id} productId=${productId} via=${titleSource} name=${name}`);
     } else {
-      logger.log(`title jobId=${job.id} productId=${productId} via=${titleSource} name=${name}`);
+      logger.log(
+        `title jobId=${job.id} productId=${productId} via=${titleSource} name=${name} hasHangtag=${hasHangtag}`,
+      );
     }
 
     let colors = [...(suggestion.colors || [])];

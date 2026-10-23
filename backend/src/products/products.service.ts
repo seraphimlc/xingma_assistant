@@ -29,6 +29,7 @@ import { IProductsRepository, PRODUCTS_REPO } from './repositories/products.repo
 import { OssClient } from '../media/oss.client';
 import { parseNoteText } from './publish/parse-note';
 import { ProductGroupsService } from './product-groups.service';
+import { TenantsService } from '../tenants/tenants.service';
 
 @Injectable()
 export class ProductsService {
@@ -40,21 +41,60 @@ export class ProductsService {
     private readonly levels: LevelsService,
     private readonly oss: OssClient,
     private readonly groups: ProductGroupsService,
+    private readonly tenants: TenantsService,
     @Optional() private readonly dataSource?: DataSource,
   ) {}
+
+  /** 客户存图权限：租户全局开关（不再按商品） */
+  private async resolveAllowCustomerDownload(tenantId: string): Promise<boolean> {
+    try {
+      const t = await this.tenants.getById(tenantId);
+      return !!(t && t.allowCustomerDownload);
+    } catch {
+      return false;
+    }
+  }
 
   private publicUrl(objectKey: string) {
     return this.oss.publicUrl(objectKey);
   }
 
   /** 列表用：只解析首张封面，避免拉全量图片 */
-  private async firstCoverUrl(tenantId: string, p: ProductRec): Promise<string> {
-    const coverId = (p.coverMediaIds || [])[0];
-    if (!coverId || !(this.dataSource && process.env.DB_ENABLED === 'true')) return '';
-    const row = await this.dataSource.getRepository(MediaAsset).findOne({
-      where: { tenantId, id: coverId, status: 'active' },
+  private isPromoAsset(row: { objectKey?: string; promoSetId?: string | null }) {
+    if (row.promoSetId) return true;
+    return String(row.objectKey || '').includes('/promo/');
+  }
+
+  /** 从 cover 列表剔除宣传图 mediaId（objectKey 含 /promo/ 或带 promoSetId） */
+  private async filterProductCoverIds(tenantId: string, ids: string[]): Promise<string[]> {
+    if (!(this.dataSource && process.env.DB_ENABLED === 'true')) {
+      return (ids || []).filter(Boolean);
+    }
+    const uniq = [...new Set((ids || []).filter(Boolean))];
+    if (!uniq.length) return [];
+    const rows = await this.dataSource.getRepository(MediaAsset).find({
+      where: { tenantId, id: In(uniq), status: 'active' },
     });
-    return row ? this.publicUrl(row.objectKey) : '';
+    const ok = new Set(rows.filter((r) => !this.isPromoAsset(r)).map((r) => r.id));
+    return uniq.filter((id) => ok.has(id));
+  }
+
+    private async firstCoverUrl(tenantId: string, p: ProductRec): Promise<string> {
+    if (!(this.dataSource && process.env.DB_ENABLED === 'true')) return '';
+    const repo = this.dataSource.getRepository(MediaAsset);
+    const coverIds = p.coverMediaIds || [];
+    for (const coverId of coverIds) {
+      const row = await repo.findOne({ where: { tenantId, id: coverId, status: 'active' } });
+      if (row && !this.isPromoAsset(row)) return this.publicUrl(row.objectKey);
+    }
+    // 兜底：商品图里第一张非宣传图
+    const rows = await repo.find({
+      where: { tenantId, productId: p.id, status: 'active', type: 'image' },
+      order: { createdAt: 'ASC' },
+      take: 20,
+    });
+    const hit = rows.find((r) => !this.isPromoAsset(r));
+    return hit ? this.publicUrl(hit.objectKey) : '';
   }
 
   private storageRoot() {
@@ -89,10 +129,12 @@ export class ProductsService {
     for (const r of rows) {
       if (byId.has(r.id)) ordered.push(r);
     }
-    return ordered.map((r) => ({
+    // 站规：商品图与宣传图永不混用；宣传图仅走宣传流
+    const productOnly = ordered.filter((r) => !this.isPromoAsset(r));
+    return productOnly.map((r) => ({
       id: r.id,
       url: this.publicUrl(r.objectKey),
-      isPromo: r.objectKey.includes('/promo/'),
+      isPromo: false,
     }));
   }
 
@@ -177,7 +219,9 @@ export class ProductsService {
     const skus = await this.repo.listSkus(user.tenantId, productId);
     if (user.role === 'owner' || user.role === 'staff') {
       void this.recordView(user, productId, 'ok', opts?.shareEventId);
-      return this.withImages(user.tenantId, p, this.toStaffDto(p, skus));
+      const staffDto = await this.withImages(user.tenantId, p, this.toStaffDto(p, skus));
+      staffDto.allowCustomerDownload = await this.resolveAllowCustomerDownload(user.tenantId);
+      return staffDto;
     }
     const policy = await this.resolveSharePolicy(user.tenantId, p);
     const minRank = await this.resolveMinRank(user.tenantId, p);
@@ -201,7 +245,9 @@ export class ProductsService {
       throw new ForbiddenException(`无权查看该商品: ${verdict.reason}`);
     }
     void this.recordView(user, productId, 'ok', opts?.shareEventId);
-    return this.withImages(user.tenantId, p, this.toPublicDto(p, skus, true));
+    const pubDto = await this.withImages(user.tenantId, p, this.toPublicDto(p, skus, true));
+    pubDto.allowCustomerDownload = await this.resolveAllowCustomerDownload(user.tenantId);
+    return pubDto;
   }
 
   /** 访问日志（异步写入，失败不影响主路径） */
@@ -307,6 +353,12 @@ export class ProductsService {
     }
     if (input.levelId) {
       await this.levels.getProductLevel(user.tenantId, input.levelId);
+    }
+    if (input.coverMediaIds) {
+      input = {
+        ...input,
+        coverMediaIds: await this.filterProductCoverIds(user.tenantId, input.coverMediaIds),
+      };
     }
     const updated = await this.repo.update(user.tenantId, id, input);
     if (!updated) throw new NotFoundException('商品不存在');

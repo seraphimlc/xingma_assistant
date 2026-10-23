@@ -63,6 +63,7 @@ Page({
     product: null,
     isStaff: false,
     canDownload: false,
+    shareMode: 'limited',
     id: '',
     shareEventId: '',
     boundCustomerId: '',
@@ -94,6 +95,11 @@ Page({
       }
     }
     await this.load(q.id, shareEventId, boundCustomerId);
+    if (this.data.isStaff) {
+      try {
+        wx.showShareMenu({ withShareTicket: true, menus: ['shareAppMessage', 'shareTimeline'] });
+      } catch (e) { /* */ }
+    }
   },
   onShow() {
     if (this.data.isStaff && this.data.id) {
@@ -219,41 +225,67 @@ Page({
     if (this.data.boundCustomerId) qs.push(`boundCustomerId=${this.data.boundCustomerId}`);
     wx.navigateTo({ url: `/pages/product/detail/detail?${qs.join('&')}` });
   },
-  async createShare() {
-    try {
-      const res = await request({
-        url: '/api/shares',
-        method: 'POST',
-        data: { productId: this.data.id, sharePolicy: 'designated_only' },
-      });
-      wx.setClipboardData({ data: res.path || res.shareId });
-      const n = res.slotLimit != null ? res.slotLimit : 5;
-      wx.showModal({
-        title: '限制分享已创建',
-        content: `仅前 ${n} 位打开链接的客户可查看（不挑选客户）。\nshareId=${res.shareId}\n落地路径已复制`,
-        showCancel: false,
-      });
-    } catch (e) {
-      wx.showToast({ title: e.message || '失败', icon: 'none' });
-    }
+  onShareModeTap(e) {
+    const v = e.currentTarget.dataset.v;
+    if (v === 'open' || v === 'limited') this.setData({ shareMode: v });
   },
-  async createOpenShare() {
+  async ensureShareForNative() {
+    const policy = this.data.shareMode === 'open' ? 'open' : 'designated_only';
+    const cacheKey = policy;
+    if (this._shareCache && this._shareCache[cacheKey] && this._shareCache[cacheKey].shareId) {
+      return this._shareCache[cacheKey];
+    }
+    const res = await request({
+      url: '/api/shares',
+      method: 'POST',
+      data: { productId: this.data.id, sharePolicy: policy },
+    });
+    if (!this._shareCache) this._shareCache = {};
+    this._shareCache[cacheKey] = res;
+    return res;
+  },
+  onShareAppMessage() {
+    const product = this.data.product || {};
+    const title = (product.name || product.styleNo || '商品分享').trim();
+    const images = product.images || [];
+    const imageUrl = (images[0] && images[0].url) || product.coverUrl || '';
+    const fallbackPath = `/pages/product/detail/detail?id=${this.data.id}`;
+    return {
+      title,
+      path: fallbackPath,
+      imageUrl: imageUrl || undefined,
+      promise: this.ensureShareForNative()
+        .then((res) => {
+          const path = res.path || `/pages/share/landing?shareId=${res.shareId}`;
+          return { title, path, imageUrl: imageUrl || undefined };
+        })
+        .catch((err) => {
+          wx.showToast({ title: (err && err.message) || '分享准备失败', icon: 'none' });
+          return { title, path: fallbackPath, imageUrl: imageUrl || undefined };
+        }),
+    };
+  },
+  onShareTimeline() {
+    const product = this.data.product || {};
+    const title = (product.name || product.styleNo || '商品分享').trim();
+    const images = product.images || [];
+    const imageUrl = (images[0] && images[0].url) || product.coverUrl || '';
+    const open = this._shareCache && this._shareCache.open;
+    const query = open && open.shareId
+      ? `shareId=${open.shareId}`
+      : `id=${this.data.id}`;
+    return {
+      title,
+      query,
+      imageUrl: imageUrl || undefined,
+    };
+  },
+  async loadContactQr() {
     try {
-      const res = await request({
-        url: '/api/shares',
-        method: 'POST',
-        data: { productId: this.data.id, sharePolicy: 'open' },
-      });
-      if (res.path || res.shareId) {
-        wx.setClipboardData({ data: res.path || res.shareId });
-      }
-      wx.showModal({
-        title: '公开分享已创建',
-        content: `不限人数，任何人打开链接可查看。\nshareId=${res.shareId}\n落地路径已复制`,
-        showCancel: false,
-      });
+      const tenant = await request({ url: '/api/tenants/current' });
+      this.setData({ contactQrUrl: (tenant && tenant.contactQrUrl) || '' });
     } catch (e) {
-      wx.showToast({ title: e.message || '失败', icon: 'none' });
+      /* ignore */
     }
   },
   goInquiry() {

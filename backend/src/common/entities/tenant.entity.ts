@@ -32,6 +32,9 @@ export class Tenant {
   @Column({ type: 'varchar', length: 512, nullable: true, name: 'contact_qr_url', comment: '业主微信二维码 URL' })
   contactQrUrl!: string | null;
 
+  @Column({ type: 'tinyint', width: 1, name: 'allow_customer_download', default: 0, comment: '客户是否可长按/保存商品图（全局）' })
+  allowCustomerDownload!: boolean;
+
   /** 预留：微信第三方平台授权方 appid */
   @Column({ type: 'varchar', length: 64, nullable: true, name: 'authorizer_appid', comment: '第三方平台授权 AppID' })
   authorizerAppid!: string | null;

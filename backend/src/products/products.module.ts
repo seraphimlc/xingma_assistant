@@ -13,11 +13,12 @@ import { PublishService } from './publish/publish.service';
 import { ProductGroupsService } from './product-groups.service';
 import { ProductGroupsController } from './product-groups.controller';
 import { JobsModule } from '../jobs/jobs.module';
+import { TenantsModule } from '../tenants/tenants.module';
 
 const dbEnabled = process.env.DB_ENABLED === 'true';
 
 @Module({
-  imports: [AuthModule, forwardRef(() => LevelsModule), forwardRef(() => JobsModule)],
+  imports: [AuthModule, forwardRef(() => LevelsModule), forwardRef(() => JobsModule), TenantsModule],
   controllers: [ProductsController, PublishController, ProductGroupsController],
   providers: [
     ProductsService,

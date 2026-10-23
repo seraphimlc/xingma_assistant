@@ -9,6 +9,7 @@ export interface TenantInfo {
   name: string;
   wxAppId: string;
   contactQrUrl?: string | null;
+  allowCustomerDownload?: boolean;
 }
 
 /** 生产档口（星马）默认租户：id 与 migrations/003_seed_default_tenant.sql 一致 */
@@ -29,7 +30,7 @@ export interface MemberRec {
 @Injectable()
 export class TenantsService {
   private readonly memTenants: TenantInfo[] = [
-    { id: DEFAULT_TENANT_ID, name: '星马羊毛衫档口', wxAppId: PROD_APP_ID },
+    { id: DEFAULT_TENANT_ID, name: '星马羊毛衫档口', wxAppId: PROD_APP_ID, allowCustomerDownload: false },
   ];
   private readonly memMembers = new Map<string, MemberRec>();
 
@@ -38,7 +39,7 @@ export class TenantsService {
     @Optional() private readonly ds?: DataSource,
   ) {
     // 兼容旧的开发占位 AppID
-    this.memTenants.push({ id: DEFAULT_TENANT_ID, name: '星马羊毛衫档口', wxAppId: 'wx_dev_appid_placeholder' });
+    this.memTenants.push({ id: DEFAULT_TENANT_ID, name: '星马羊毛衫档口', wxAppId: 'wx_dev_appid_placeholder', allowCustomerDownload: false });
   }
 
   private get db(): DataSource | null {
@@ -49,7 +50,13 @@ export class TenantsService {
     if (this.db) {
       const t = await this.db.getRepository(Tenant).findOne({ where: { wxAppId: appId } });
       if (t && t.status === 'active') {
-        return { id: t.id, name: t.name, wxAppId: t.wxAppId, contactQrUrl: (t as any).contactQrUrl || null };
+        return {
+          id: t.id,
+          name: t.name,
+          wxAppId: t.wxAppId,
+          contactQrUrl: (t as any).contactQrUrl || null,
+          allowCustomerDownload: !!(t as any).allowCustomerDownload,
+        };
       }
     } else {
       const t = this.memTenants.find((x) => x.wxAppId === appId);
@@ -62,7 +69,13 @@ export class TenantsService {
     if (this.db) {
       const t = await this.db.getRepository(Tenant).findOne({ where: { id: tenantId } });
       return t
-        ? { id: t.id, name: t.name, wxAppId: t.wxAppId, contactQrUrl: (t as any).contactQrUrl || null }
+        ? {
+            id: t.id,
+            name: t.name,
+            wxAppId: t.wxAppId,
+            contactQrUrl: (t as any).contactQrUrl || null,
+            allowCustomerDownload: !!(t as any).allowCustomerDownload,
+          }
         : null;
     }
     return this.memTenants.find((x) => x.id === tenantId) || null;
@@ -176,12 +189,33 @@ export class TenantsService {
   }
 
   async setContactQr(tenantId: string, url: string | null) {
-    if (!this.db) throw new NotFoundException('DB 未启用');
-    const repo = this.db.getRepository(Tenant);
-    const row = await repo.findOne({ where: { id: tenantId } });
-    if (!row) throw new NotFoundException('租户不存在');
-    row.contactQrUrl = url;
-    await repo.save(row);
-    return { contactQrUrl: row.contactQrUrl };
+    if (this.db) {
+      const repo = this.db.getRepository(Tenant);
+      const row = await repo.findOne({ where: { id: tenantId } });
+      if (!row) throw new NotFoundException('租户不存在');
+      row.contactQrUrl = url;
+      await repo.save(row);
+      return { contactQrUrl: row.contactQrUrl };
+    }
+    const mem = this.memTenants.find((x) => x.id === tenantId);
+    if (!mem) throw new NotFoundException('租户不存在');
+    mem.contactQrUrl = url;
+    return { contactQrUrl: mem.contactQrUrl };
+  }
+
+  async setAllowCustomerDownload(tenantId: string, allow: boolean) {
+    const value = !!allow;
+    if (this.db) {
+      const repo = this.db.getRepository(Tenant);
+      const row = await repo.findOne({ where: { id: tenantId } });
+      if (!row) throw new NotFoundException('租户不存在');
+      (row as any).allowCustomerDownload = value;
+      await repo.save(row);
+      return { allowCustomerDownload: value };
+    }
+    const mem = this.memTenants.find((x) => x.id === tenantId);
+    if (!mem) throw new NotFoundException('租户不存在');
+    mem.allowCustomerDownload = value;
+    return { allowCustomerDownload: value };
   }
 }

@@ -67,17 +67,23 @@
 }
 .note-btn.disabled { opacity: 0.45; pointer-events: none; }
 
-.img-ord {
+.img-cell.sortable.is-dragging {
+  opacity: 0.55;
+  transform: scale(1.06);
+  box-shadow: 0 8rpx 24rpx rgba(196, 92, 38, 0.35);
+  z-index: 2;
+}
+.img-cell.sortable.is-over {
+  outline: 4rpx solid #c45c26;
+  outline-offset: -4rpx;
+}
+.img-cover-badge {
   position: absolute;
-  left: 0; right: 0; bottom: 0;
-  display: flex;
-  background: rgba(0,0,0,.45);
-}
-.ord-btn {
-  flex: 1;
-  text-align: center;
+  left: 8rpx;
+  bottom: 8rpx;
+  font-size: 20rpx;
+  padding: 2rpx 10rpx;
+  border-radius: 8rpx;
+  background: rgba(196, 92, 38, 0.92);
   color: #fff;
-  font-size: 22rpx;
-  line-height: 44rpx;
 }
-.ord-btn.off { opacity: 0.35; }

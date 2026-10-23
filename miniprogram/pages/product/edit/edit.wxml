@@ -63,6 +63,11 @@
         <picker mode="selector" range="{{productLevels}}" range-key="name" value="{{levelIndex}}" bindchange="onLevelChange">
           <view class="picker">{{productLevels[levelIndex].name || '请选择'}}</view>
         </picker>
+        <view class="field-label">所属分组</view>
+        <picker mode="selector" range="{{groups}}" range-key="name" value="{{groupIndex}}" bindchange="onGroupChange">
+          <view class="picker">{{groups[groupIndex].name || '请选择分组'}}</view>
+        </picker>
+        <view class="section-hint" wx:if="{{!groups.length}}">暂无分组：请到商品列表点「管理」新建</view>
       </view>
 
       <view class="card">
@@ -79,17 +84,23 @@
   <block wx:else>
     <view class="card">
       <view class="section-title">商品图片</view>
-      <view class="section-hint">点图预览；角标删除；左移/右移/置顶调序（立即保存）；可多选追加</view>
+      <view class="section-hint">点图预览；角标删除；长按拖动调序（松手立即保存）；首张为列表封面；可多选追加</view>
       <view class="img-grid">
-        <view class="img-cell" wx:for="{{images}}" wx:key="id">
-          <image src="{{item.url}}" mode="aspectFill" class="thumb" data-url="{{item.url}}" bindtap="previewImage" />
+        <view
+          class="img-cell sortable {{draggingIndex===index?'is-dragging':''}} {{dragOverIndex===index && draggingIndex!==index?'is-over':''}}"
+          wx:for="{{images}}"
+          wx:key="id"
+          data-id="{{item.id}}"
+          data-index="{{index}}"
+          bindlongpress="onImgLongPress"
+          catchtouchmove="onImgTouchMove"
+          bindtouchend="onImgTouchEnd"
+          bindtouchcancel="onImgTouchEnd"
+        >
+          <image src="{{item.url}}" mode="aspectFill" class="thumb" data-url="{{item.url}}" catchtap="previewImage" />
           <view class="img-del" data-id="{{item.id}}" catchtap="removeImage">×</view>
+          <view class="img-cover-badge" wx:if="{{index===0}}">封面</view>
           <view class="img-mark" wx:if="{{item.isPromo}}">AI</view>
-          <view class="img-ord">
-            <view class="ord-btn {{index===0?'off':''}}" data-id="{{item.id}}" data-dir="left" catchtap="moveImage">◀</view>
-            <view class="ord-btn" data-id="{{item.id}}" data-dir="top" catchtap="moveImage">顶</view>
-            <view class="ord-btn {{index===images.length-1?'off':''}}" data-id="{{item.id}}" data-dir="right" catchtap="moveImage">▶</view>
-          </view>
         </view>
         <view class="img-cell add {{uploading ? 'disabled' : ''}}" bindtap="addImages">
           <text class="add-plus">+</text>
@@ -137,21 +148,17 @@
       <picker mode="selector" range="{{productLevels}}" range-key="name" value="{{levelIndex}}" bindchange="onLevelChange">
         <view class="picker">{{productLevels[levelIndex].name || '请选择'}}</view>
       </picker>
-      <view class="field-label">客户下载图片</view>
-      <view class="seg">
-        <view class="seg-item {{!allowCustomerDownload?'on':''}}" data-v="0" bindtap="onDownloadTap">禁止</view>
-        <view class="seg-item {{allowCustomerDownload?'on':''}}" data-v="1" bindtap="onDownloadTap">允许</view>
-      </view>
-      <view class="section-hint">默认禁止：客户详情不可长按保存；开启后才可保存到相册</view>
+      <view class="field-label">所属分组</view>
+      <picker mode="selector" range="{{groups}}" range-key="name" value="{{groupIndex}}" bindchange="onGroupChange">
+        <view class="picker">{{groups[groupIndex].name || '请选择分组'}}</view>
+      </picker>
+      <view class="section-hint" wx:if="{{!groups.length}}">暂无分组：请到商品列表点「管理」新建</view>
     </view>
 
     <view class="card">
       <sku-list skus="{{skus}}" bind:change="onSkusChange" />
     </view>
 
-    <view class="card">
-      <view class="btn-weak" bindtap="copyProduct">复制为新款</view>
-    </view>
   </block>
 </view>
 

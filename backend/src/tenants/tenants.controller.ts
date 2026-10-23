@@ -18,7 +18,12 @@ export class TenantsController {
   @UseGuards(JwtAuthGuard)
   async current(@AuthUser() user: AuthContext) {
     const t = await this.tenantsService.getById(user.tenantId);
-    return { id: t?.id, name: t?.name, contactQrUrl: t?.contactQrUrl || null };
+    return {
+      id: t?.id,
+      name: t?.name,
+      contactQrUrl: t?.contactQrUrl || null,
+      allowCustomerDownload: !!t?.allowCustomerDownload,
+    };
   }
 
   @Patch('current/contact-qr')
@@ -26,6 +31,18 @@ export class TenantsController {
   @Roles('owner', 'staff')
   setContactQr(@AuthUser() user: AuthContext, @Body() body: { url?: string | null }) {
     return this.tenantsService.setContactQr(user.tenantId, body?.url ?? null);
+  }
+
+  @Patch('current/allow-customer-download')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('owner', 'staff')
+  setAllowCustomerDownload(
+    @AuthUser() user: AuthContext,
+    @Body() body: { allow?: boolean; allowCustomerDownload?: boolean },
+  ) {
+    const allow =
+      body?.allowCustomerDownload !== undefined ? !!body.allowCustomerDownload : !!body?.allow;
+    return this.tenantsService.setAllowCustomerDownload(user.tenantId, allow);
   }
 
   @Get(':id')

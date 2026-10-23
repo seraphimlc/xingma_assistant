@@ -20,6 +20,15 @@
     <view class="link danger" wx:if="{{contactQrUrl}}" style="margin-top:12rpx;" bindtap="clearContactQr">清除</view>
   </view>
 
+  <view class="card">
+    <view class="section">客户下载图片</view>
+    <view class="muted">全局开关：开启后客户可在商品详情长按/保存图片到相册；关闭则全店禁止（员工不受影响）</view>
+    <view class="seg" style="margin-top:16rpx;">
+      <view class="seg-item {{!allowCustomerDownload?'on':''}}" data-v="0" bindtap="onAllowDownloadTap">禁止</view>
+      <view class="seg-item {{allowCustomerDownload?'on':''}}" data-v="1" bindtap="onAllowDownloadTap">允许</view>
+    </view>
+  </view>
+
 <view class="card">
     <view class="section">客户等级</view>
     <view class="muted">纯人工调整，无自动升降级</view>

@@ -48,33 +48,67 @@ Page({
     skus: [{ color: '', price: '' }],
     productLevels: [],
     levelIndex: 0,
+    groups: [],
+    groupId: '',
+    groupIndex: 0,
     images: [],
-    allowCustomerDownload: false,
     saving: false,
     uploading: false,
     reordering: false,
+    draggingIndex: -1,
+    dragOverIndex: -1,
   },
   async onLoad(q) {
-    await this.loadLevels();
+    await Promise.all([this.loadLevels(), this.loadGroups()]);
     if (q.id) {
       this.setData({ id: q.id, parsed: true });
       wx.setNavigationBarTitle({ title: '编辑商品' });
       await this.loadProduct(q.id);
     } else {
       wx.setNavigationBarTitle({ title: '手工发品' });
+      // 新建默认进本季/最新分组
+      const groups = this.data.groups || [];
+      const latest = groups.find((g) => g.isLatest) || groups[0];
+      if (latest) {
+        this.setData({ groupId: latest.id, groupIndex: groups.indexOf(latest) });
+      }
     }
   },
   async loadLevels() {
     try {
       const productLevels = await request({ url: '/api/levels/product' });
-      const list = productLevels || [];
+      const list = Array.isArray(productLevels) ? productLevels : (productLevels && productLevels.items) || [];
+      const open = list.find((l) => {
+        const code = String((l && l.code) || '').toLowerCase();
+        const id = String((l && l.id) || '');
+        return code === 'open' || id === 'pl_open';
+      }) || list[0];
+      const levelId = this.data.levelId || (open && open.id) || '';
+      let levelIndex = list.findIndex((l) => l.id === levelId);
+      if (levelIndex < 0) levelIndex = 0;
       this.setData({
         productLevels: list,
-        levelId: this.data.levelId || (list[0] && list[0].id) || '',
-        levelIndex: 0,
+        levelId: levelId || (list[0] && list[0].id) || '',
+        levelIndex,
       });
     } catch (e) {
       wx.showToast({ title: e.message || '等级加载失败', icon: 'none' });
+    }
+  },
+  async loadGroups() {
+    try {
+      const res = await request({ url: '/api/product-groups' });
+      const groups = (res && res.items) || [];
+      let groupId = this.data.groupId;
+      let groupIndex = groups.findIndex((g) => g.id === groupId);
+      if (groupIndex < 0) {
+        const latest = groups.find((g) => g.isLatest) || groups[0];
+        groupId = latest ? latest.id : '';
+        groupIndex = latest ? groups.indexOf(latest) : 0;
+      }
+      this.setData({ groups, groupId, groupIndex: Math.max(0, groupIndex) });
+    } catch (e) {
+      this.setData({ groups: [] });
     }
   },
   async loadProduct(id) {
@@ -86,6 +120,13 @@ Page({
       const sizeText = parseSizeFromDesc(p.description);
       let description = p.description || '';
       description = description.replace(/^尺码[：:].+\n?/m, '').trim();
+      const groups = this.data.groups || [];
+      let groupIndex = groups.findIndex((g) => g.id === p.groupId);
+      if (groupIndex < 0) {
+        const latest = groups.find((g) => g.isLatest) || groups[0];
+        groupIndex = latest ? groups.indexOf(latest) : 0;
+      }
+      const groupId = (groups[groupIndex] && groups[groupIndex].id) || p.groupId || '';
       this.setData({
         styleNo: p.styleNo || '',
         name: p.name || '',
@@ -93,6 +134,8 @@ Page({
         description,
         sizeText,
         levelId: p.levelId || '',
+        groupId,
+        groupIndex: Math.max(0, groupIndex),
         priceDisplay: p.priceDisplay || 'show',
         status: p.status || 'draft',
         skus: (p.skus && p.skus.length)
@@ -103,8 +146,7 @@ Page({
             }))
           : [{ color: '', price: '' }],
         levelIndex,
-        images: (p.images || []).filter((im) => im && im.url),
-        allowCustomerDownload: !!p.allowCustomerDownload,
+        images: (p.images || []).filter((im) => im && im.url && !im.isPromo),
       });
     } catch (e) {
       wx.showToast({ title: e.message || '加载失败', icon: 'none' });
@@ -165,6 +207,10 @@ Page({
     }
   },
   previewImage(e) {
+    if (this._skipPreviewOnce) {
+      this._skipPreviewOnce = false;
+      return;
+    }
     const url = e.currentTarget.dataset.url;
     const urls = (this.data.images || []).map((im) => im.url).filter(Boolean);
     if (!url || !urls.length) return;
@@ -225,7 +271,7 @@ Page({
                 if (res.statusCode >= 200 && res.statusCode < 300) {
                   try {
                     const body = JSON.parse(res.data);
-                    if (body.images) this.setData({ images: body.images.filter((im) => im && im.url) });
+                    if (body.images) this.setData({ images: body.images.filter((im) => im && im.url && !im.isPromo) });
                     resolve(body);
                   } catch (e) {
                     reject(new Error('上传响应解析失败'));
@@ -268,7 +314,7 @@ Page({
         method: 'DELETE',
         data: {},
       });
-      this.setData({ images: (p.images || []).filter((im) => im && im.url) });
+      this.setData({ images: (p.images || []).filter((im) => im && im.url && !im.isPromo) });
     } catch (err) {
       wx.showToast({ title: err.message || '删除失败', icon: 'none' });
     }
@@ -285,33 +331,74 @@ Page({
     const level = this.data.productLevels[idx];
     this.setData({ levelIndex: idx, levelId: level ? level.id : '' });
   },
+  onGroupChange(e) {
+    const idx = Number(e.detail.value);
+    const group = this.data.groups[idx];
+    this.setData({ groupIndex: idx, groupId: group ? group.id : '' });
+  },
   onSkusChange(e) {
     this.setData({ skus: e.detail.skus || [] });
   },
-  onDownloadTap(e) {
-    const v = e.currentTarget.dataset.v;
-    this.setData({ allowCustomerDownload: v === '1' || v === 1 });
-  },
-  async moveImage(e) {
+  onImgLongPress(e) {
     if (this.data.reordering || !this.data.id) return;
+    const index = Number(e.currentTarget.dataset.index);
     const id = e.currentTarget.dataset.id;
-    const dir = e.currentTarget.dataset.dir;
+    if (!id || Number.isNaN(index) || index < 0) return;
+    this._drag = { active: true, from: index, id, moved: false };
+    this.setData({ draggingIndex: index, dragOverIndex: index });
+    try { wx.vibrateShort({ type: 'medium' }); } catch (err) { /* */ }
+    wx.createSelectorQuery()
+      .in(this)
+      .selectAll('.img-cell.sortable')
+      .boundingClientRect((rects) => {
+        this._cellRects = Array.isArray(rects) ? rects : [];
+      })
+      .exec();
+  },
+  onImgTouchMove(e) {
+    if (!this._drag || !this._drag.active) return;
+    const t = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]);
+    if (!t) return;
+    this._drag.moved = true;
+    const rects = this._cellRects || [];
+    let over = this._drag.from;
+    for (let i = 0; i < rects.length; i++) {
+      const r = rects[i];
+      if (!r) continue;
+      if (t.clientX >= r.left && t.clientX <= r.right && t.clientY >= r.top && t.clientY <= r.bottom) {
+        over = i;
+        break;
+      }
+    }
+    if (over !== this.data.dragOverIndex) {
+      this.setData({ dragOverIndex: over });
+    }
+  },
+  onImgTouchEnd() {
+    if (!this._drag || !this._drag.active) return;
+    const from = this._drag.from;
+    const to = this.data.dragOverIndex;
+    const moved = this._drag.moved;
+    this._drag = null;
+    this._cellRects = null;
+    this.setData({ draggingIndex: -1, dragOverIndex: -1 });
+    if (moved) this._skipPreviewOnce = true;
+    if (moved && from >= 0 && to >= 0 && from !== to) {
+      this.reorderImages(from, to);
+    }
+  },
+  async reorderImages(from, to) {
+    if (this.data.reordering || !this.data.id) return;
     const images = (this.data.images || []).slice();
-    const idx = images.findIndex((im) => im.id === id);
-    if (idx < 0) return;
-    let next = idx;
-    if (dir === 'left') next = idx - 1;
-    else if (dir === 'right') next = idx + 1;
-    else if (dir === 'top') next = 0;
-    if (next < 0 || next >= images.length || next === idx) return;
-    const [item] = images.splice(idx, 1);
-    images.splice(next, 0, item);
+    if (from < 0 || to < 0 || from >= images.length || to >= images.length) return;
+    const [item] = images.splice(from, 1);
+    images.splice(to, 0, item);
     this.setData({ images, reordering: true });
     try {
       await request({
         url: `/api/products/${this.data.id}`,
         method: 'PATCH',
-        data: { coverMediaIds: images.map((im) => im.id) },
+        data: { coverMediaIds: images.map((im) => im.id).filter(Boolean) },
       });
     } catch (err) {
       wx.showToast({ title: (err && err.message) || '调序失败', icon: 'none' });
@@ -336,9 +423,9 @@ Page({
       material: this.data.material.trim() || null,
       description: buildDescription(this.data.sizeText, this.data.description),
       levelId: this.data.levelId,
+      groupId: this.data.groupId || null,
       priceDisplay: this.data.priceDisplay,
       status: this.data.status,
-      allowCustomerDownload: !!this.data.allowCustomerDownload,
       skus,
     };
   },
@@ -386,20 +473,6 @@ Page({
       wx.showToast({ title: e.message || '保存失败', icon: 'none' });
     } finally {
       this.setData({ saving: false });
-    }
-  },
-  async copyProduct() {
-    if (!this.data.id) return;
-    try {
-      const res = await request({
-        url: `/api/products/${this.data.id}/copy`,
-        method: 'POST',
-        data: {},
-      });
-      wx.showToast({ title: '已复制' });
-      wx.redirectTo({ url: `/pages/product/edit/edit?id=${res.id}` });
-    } catch (e) {
-      wx.showToast({ title: e.message || '复制失败', icon: 'none' });
     }
   },
 });

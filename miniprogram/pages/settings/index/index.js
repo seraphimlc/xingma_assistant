@@ -7,6 +7,7 @@ Page({
     nickname: '',
     avatarUrl: '',
     contactQrUrl: '',
+    allowCustomerDownload: false,
     isOwner: false,
     inviteRole: 'staff',
     invites: [],
@@ -59,6 +60,7 @@ Page({
         nickname: (me && me.nickname) || '',
         avatarUrl: (me && me.avatarUrl) || '',
         contactQrUrl: (tenant && tenant.contactQrUrl) || '',
+        allowCustomerDownload: !!(tenant && tenant.allowCustomerDownload),
         members,
         invites,
       });
@@ -133,6 +135,21 @@ Page({
       wx.showToast({ title: '已清除', icon: 'none' });
     } catch (e) {
       wx.showToast({ title: e.message || '失败', icon: 'none' });
+    }
+  },
+  async onAllowDownloadTap(e) {
+    const v = e.currentTarget.dataset.v;
+    const allow = v === '1' || v === 1;
+    try {
+      await request({
+        url: '/api/tenants/current/allow-customer-download',
+        method: 'PATCH',
+        data: { allowCustomerDownload: allow },
+      });
+      this.setData({ allowCustomerDownload: allow });
+      wx.showToast({ title: allow ? '已允许客户存图' : '已禁止客户存图', icon: 'none' });
+    } catch (err) {
+      wx.showToast({ title: (err && err.message) || '保存失败', icon: 'none' });
     }
   },
   onClCode(e) { this.setData({ clCode: e.detail.value }); },

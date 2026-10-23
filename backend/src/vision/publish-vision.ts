@@ -72,19 +72,23 @@ function normalizeVisionColors(list: unknown): string[] {
 }
 
 /**
- * 根据主图生成中文商品标题（款式描述），可附副标题。
+ * 根据成衣商品图（可多张，非吊牌）生成中文商品标题。
+ * 无吊牌/OCR 清晰品名时应走此路径，勿用文件名占位。
  * 失败时返回兜底标题，保证非空。
  */
 export async function generateProductTitle(
   vision: VisionClient,
-  localPath: string,
+  localPaths: string | string[],
   opts?: { styleNo?: string },
 ): Promise<VisionTitleResult> {
   const fallback = opts?.styleNo
     ? `款号 ${opts.styleNo}`
     : '针织上衣';
-  if (!localPath || !fs.existsSync(localPath)) {
-    return { title: fallback, via: 'fallback', reason: '主图不存在' };
+  const paths = (Array.isArray(localPaths) ? localPaths : [localPaths])
+    .filter((p) => p && fs.existsSync(p))
+    .slice(0, 4);
+  if (!paths.length) {
+    return { title: fallback, via: 'fallback', reason: '商品图不存在' };
   }
   if (!vision.configured()) {
     return { title: fallback, via: 'fallback', reason: '未配置 VISION_API_KEY' };
@@ -93,19 +97,26 @@ export async function generateProductTitle(
     const parts: VisionContentPart[] = [
       {
         type: 'text',
-        text: `你是羊毛衫档口电商助手。根据这张成衣主图，写一条中文商品标题（款式描述）。
+        text: `你是羊毛衫档口电商助手。根据成衣商品图（可能多张），写一条中文商品标题（款式描述）。
 要求：
 - title：8～16 个汉字，描述领型/袖长/版型/面料观感，例如「圆领短袖净色针织」「半高领宽松绞花毛衣」
-- 不要写品牌、价格、尺码、颜色枚举、营销词（爆款/新款/包邮）
+- 综合多张图的共性款式，不要只看背景或吊牌文字
+- 不要写品牌、价格、尺码、颜色枚举、营销词（爆款/新款/包邮）、不要用文件名
 - 不要空 title
 - subtitle 可选：一句补充材质或细节（≤20字），没有则 null
 只回一行 JSON：{"title":"圆领短袖净色针织","subtitle":null}`,
       },
-      {
-        type: 'image_url',
-        image_url: { url: vision.fileToDataUrl(localPath) },
-      },
     ];
+    for (let i = 0; i < paths.length; i++) {
+      parts.push({
+        type: 'text',
+        text: `image_${i} file=${path.basename(paths[i])}`,
+      });
+      parts.push({
+        type: 'image_url',
+        image_url: { url: vision.fileToDataUrl(paths[i]) },
+      });
+    }
     const content = await vision.chat(parts, { maxTokens: 200, temperature: 0.2 });
     const parsed = parseJsonLoose(content);
     const title = sanitizeTitle(parsed.title);
@@ -117,7 +128,9 @@ export async function generateProductTitle(
       title,
       subtitle,
       via: 'vision',
-      reason: subtitle ? `vision+副标题` : 'vision',
+      reason: subtitle
+        ? `vision+副标题 (${paths.length}图)`
+        : `vision (${paths.length}图)`,
     };
   } catch (e: any) {
     const msg = String(e?.message || e).slice(0, 120);
@@ -180,9 +193,12 @@ export async function estimateGarmentColors(
 export function isWeakProductTitle(name: string | null | undefined): boolean {
   const n = String(name || '').trim();
   if (!n) return true;
-  if (n === '新款羊毛衫' || n === '未命名' || n === '针织上衣') return true;
+  if (n === '新款羊毛衫' || n === '未命名' || n === '针织上衣' || n === '羊毛衫') return true;
   if (/^识别中/.test(n)) return true;
   if (/^款号\s*\S+$/.test(n)) return true;
+  // 纯数字/文件名式占位
+  if (/^\d{4,8}$/.test(n)) return true;
+  if (/\.(jpg|jpeg|png|webp|heic)$/i.test(n)) return true;
   return false;
 }
 
