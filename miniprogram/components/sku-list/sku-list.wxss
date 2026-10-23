@@ -39,11 +39,15 @@
 .card-row .input {
   background: #fff;
   border-radius: 12rpx;
-  padding: 18rpx 20rpx;
+  /* 固定高度 + 左右 padding，垂直用 line-height 居中（避免字贴底） */
+  padding: 0 20rpx;
   font-size: 28rpx;
   height: 72rpx;
+  min-height: 72rpx;
+  line-height: 72rpx;
   box-sizing: border-box;
   border: 1rpx solid #eee;
+  vertical-align: middle;
 }
 .card-row .col-color { flex: 1.2; }
 .card-row .col-price { flex: 1; }
