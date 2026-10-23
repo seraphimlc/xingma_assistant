@@ -27,7 +27,7 @@ export class CustomersController {
     @Query('q') q?: string,
     @Query('levelId') levelId?: string,
   ) {
-    return this.customersService.list(user.tenantId, { q, levelId });
+    return this.customersService.list(user.tenantId, { q, levelId }, user);
   }
 
   /** 批量改等级（静态路径须在 :id 之前） */

@@ -3,12 +3,15 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
+  forwardRef,
 } from '@nestjs/common';
 import { AuthContext } from '../common/interfaces/auth-context.interface';
 import { newId } from '../common/utils/id';
 import { LevelsService } from '../levels/levels.service';
 import { CustomerRec } from './customer.types';
 import { CUSTOMERS_REPO, ICustomersRepository } from './repositories/customers.repository';
+import { InquiriesService } from '../inquiries/inquiries.service';
 
 /** 客户服务：首次访问自动建档 + 默认等级 + 跟进/例外规则 */
 @Injectable()
@@ -16,6 +19,9 @@ export class CustomersService {
   constructor(
     @Inject(CUSTOMERS_REPO) private readonly repo: ICustomersRepository,
     private readonly levels: LevelsService,
+    @Optional()
+    @Inject(forwardRef(() => InquiriesService))
+    private readonly inquiries?: InquiriesService,
   ) {}
 
   async ensureProfile(user: AuthContext): Promise<CustomerRec> {
@@ -52,14 +58,36 @@ export class CustomersService {
     }
   }
 
-  list(tenantId: string, opts?: { levelId?: string; q?: string }) {
-    return this.repo.list(tenantId, opts);
+  async list(tenantId: string, opts?: { levelId?: string; q?: string }, authUser?: AuthContext) {
+    const rows = await this.repo.list(tenantId, opts);
+    if (!this.inquiries || !authUser || (authUser.role !== 'owner' && authUser.role !== 'staff')) {
+      return rows;
+    }
+    try {
+      const summary = await this.inquiries.unreadSummary(authUser);
+      const byId = new Map(summary.customers.map((c) => [c.customerId, c]));
+      return rows.map((c) => {
+        const st = byId.get(c.id);
+        const { openid: _oid, ...rest } = c;
+        return {
+          ...rest,
+          inquiryCount: st?.inquiryCount ?? 0,
+          unreadInquiryCount: st?.unreadCount ?? 0,
+          hasUnreadInquiry: st?.hasUnreadInquiry ?? false,
+        };
+      });
+    } catch {
+      return rows.map((c) => {
+        const { openid: _oid, ...rest } = c;
+        return rest;
+      });
+    }
   }
 
-  /** 客户本人更新昵称头像 */
+  /** 客户本人更新昵称/头像/手机 */
   async updateSelfProfile(
     user: AuthContext,
-    patch: { nickname?: string | null; avatarUrl?: string | null },
+    patch: { nickname?: string | null; avatarUrl?: string | null; phone?: string | null },
   ) {
     const c = await this.ensureProfile(user);
     const updated = await this.repo.update(user.tenantId, c.id, patch);
@@ -72,7 +100,9 @@ export class CustomersService {
     if (!c) throw new NotFoundException('客户不存在');
     const followUps = await this.repo.listFollowUps(tenantId, id);
     const rules = await this.repo.listRules(tenantId, id);
-    return { ...c, followUps, rules };
+    // 详情对员工不返回 openid（按产品要求）
+    const { openid: _openid, ...rest } = c;
+    return { ...rest, followUps, rules };
   }
 
   /** 人工调整等级：以租户配置为准，不信任客户端传来的 rank/code */

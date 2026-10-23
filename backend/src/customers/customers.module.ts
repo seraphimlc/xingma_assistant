@@ -3,6 +3,7 @@ import { CustomersService } from './customers.service';
 import { CustomersController } from './customers.controller';
 import { AuthModule } from '../auth/auth.module';
 import { LevelsModule } from '../levels/levels.module';
+import { InquiriesModule } from '../inquiries/inquiries.module';
 import { CUSTOMERS_REPO } from './repositories/customers.repository';
 import { MemoryCustomersRepository } from './repositories/memory-customers.repository';
 import { TypeOrmCustomersRepository } from './repositories/typeorm-customers.repository';
@@ -11,7 +12,7 @@ import { DataSource } from 'typeorm';
 const dbEnabled = process.env.DB_ENABLED === 'true';
 
 @Module({
-  imports: [AuthModule, forwardRef(() => LevelsModule)],
+  imports: [AuthModule, forwardRef(() => LevelsModule), forwardRef(() => InquiriesModule)],
   controllers: [CustomersController],
   providers: [
     CustomersService,

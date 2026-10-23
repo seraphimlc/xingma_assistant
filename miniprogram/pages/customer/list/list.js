@@ -1,5 +1,6 @@
 const publishQueue = require('../../../utils/publish-upload-queue');
 const { request } = require('../../../utils/request');
+const { refreshCustomerTabBadge } = require('../../../utils/customer-tab-badge');
 
 function ensureStaff() {
   const app = getApp();
@@ -13,10 +14,25 @@ function ensureStaff() {
 }
 
 function enrich(c) {
-  const nickname = (c.nickname || '').trim();
-  const displayName = nickname || (c.openid ? `客户 ${String(c.openid).slice(-6)}` : c.id);
-  const nickShort = (nickname || displayName).slice(0, 1);
-  return Object.assign({}, c, { displayName, nickShort });
+  const nickname = (c.nickname || c.contactName || '').trim();
+  const phone = (c.phone || '').trim();
+  let displayName = nickname;
+  if (!displayName && phone) displayName = phone;
+  if (!displayName) displayName = '未留联系方式';
+  const contactLine = [nickname, phone].filter(Boolean).join(' · ') || '未留联系方式';
+  const nickShort = (nickname || phone || '客').slice(0, 1);
+  const inquiryCount = c.inquiryCount || 0;
+  const hasUnreadInquiry = !!c.hasUnreadInquiry;
+  // 行红点：有未读，或有询价记录
+  const showDot = hasUnreadInquiry || inquiryCount > 0;
+  return Object.assign({}, c, {
+    displayName,
+    contactLine,
+    nickShort,
+    inquiryCount,
+    hasUnreadInquiry,
+    showDot,
+  });
 }
 
 Page({
@@ -25,9 +41,10 @@ Page({
     try { publishQueue.resumeAll(); } catch (e) { /* */ }
     if (!ensureStaff()) return;
     this.load();
+    refreshCustomerTabBadge();
   },
   onPullDownRefresh() {
-    this.load().finally(() => wx.stopPullDownRefresh());
+    Promise.all([this.load(), refreshCustomerTabBadge()]).finally(() => wx.stopPullDownRefresh());
   },
   onSearchInput(e) { this.setData({ q: e.detail.value }); },
   onSearch() { this.load(); },

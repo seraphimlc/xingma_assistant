@@ -1,63 +1,28 @@
-.hero {
-  text-align: center;
-  padding: 48rpx 36rpx 40rpx;
-}
-.icon-wrap {
-  font-size: 64rpx;
-  margin-bottom: 16rpx;
-  line-height: 1.2;
-}
-.lead {
-  margin-top: 12rpx;
-  font-size: 28rpx;
-  color: #5c524c;
-  line-height: 1.55;
-}
-
-.step {
-  display: flex;
-  gap: 20rpx;
-  align-items: flex-start;
-  margin-top: 28rpx;
-}
-.step:first-of-type { margin-top: 20rpx; }
-.step-num {
-  width: 44rpx;
-  height: 44rpx;
-  border-radius: 50%;
-  background: var(--color-primary-soft);
-  color: var(--color-primary);
-  font-weight: 700;
-  font-size: 24rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  line-height: 44rpx;
-  text-align: center;
-}
-.step-body { flex: 1; min-width: 0; }
-.step-title { font-size: 28rpx; font-weight: 600; margin-bottom: 6rpx; }
-
-.tip {
-  background: #fff7e6;
-  box-shadow: none;
-}
-.tip-title {
-  font-size: 28rpx;
-  font-weight: 600;
-  color: #ad6800;
-  margin-bottom: 8rpx;
-}
-
 .head { margin-bottom: 8rpx; }
 .search-bar { display: flex; gap: 12rpx; align-items: center; }
 .search-bar .input { flex: 1; }
 .search-btn { color: #c45c26; padding: 8rpx 12rpx; }
-.row { display: flex; align-items: center; gap: 20rpx; padding: 24rpx; }
-.avatar { width: 80rpx; height: 80rpx; border-radius: 50%; background: #f0ebe6; flex-shrink: 0; }
+.row { display: flex; align-items: center; gap: 20rpx; padding: 24rpx; position: relative; }
+.avatar-wrap { position: relative; flex-shrink: 0; width: 80rpx; height: 80rpx; }
+.avatar { width: 80rpx; height: 80rpx; border-radius: 50%; background: #f0ebe6; }
 .avatar-ph { display: flex; align-items: center; justify-content: center; color: #b08a70; font-size: 32rpx; }
+.row-dot {
+  position: absolute; top: 0; right: 0;
+  width: 18rpx; height: 18rpx; border-radius: 50%;
+  background: #ff4d4f; border: 2rpx solid #fff;
+}
+.row-dot.unread { background: #ff4d4f; }
 .body { flex: 1; min-width: 0; }
+.name-line { display: flex; align-items: center; gap: 12rpx; flex-wrap: wrap; }
 .name { font-size: 30rpx; font-weight: 560; }
+.badge-unread {
+  font-size: 20rpx; color: #fff; background: #ff4d4f;
+  padding: 2rpx 10rpx; border-radius: 8rpx; line-height: 1.4;
+}
+.badge-inq {
+  font-size: 20rpx; color: #8a4b28; background: #f7ebe4;
+  padding: 2rpx 10rpx; border-radius: 8rpx; line-height: 1.4;
+}
 .arrow { font-size: 36rpx; }
 .empty { padding: 40rpx 24rpx; }
+.small { font-size: 24rpx; margin-top: 4rpx; }

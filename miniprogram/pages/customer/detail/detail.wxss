@@ -1,8 +1,56 @@
-.section { font-weight: 600; margin-bottom: 12rpx; }
-.picker { background: #f5f5f5; padding: 16rpx; border-radius: 8rpx; }
-.input { background: #f5f5f5; padding: 12rpx 16rpx; border-radius: 8rpx; margin-top: 12rpx; width: 100%; box-sizing: border-box; }
-.area { min-height: 100rpx; }
-.fu { padding: 12rpx 0; border-bottom: 1px solid #eee; }
+.contact-card .contact-name {
+  font-size: 36rpx;
+  font-weight: 650;
+  margin-top: 8rpx;
+}
+.contact-phone {
+  font-size: 30rpx;
+  color: #5c524c;
+  margin-top: 8rpx;
+}
+.tip { margin-top: 12rpx; }
+.copy-btn { margin-top: 24rpx; }
+.copy-btn.disabled { opacity: 0.45; pointer-events: none; }
+
+.inq {
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid var(--color-line, #eee7e1);
+}
+.inq:last-child { border-bottom: none; }
+.inq-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16rpx;
+}
+.inq-product { font-weight: 600; font-size: 28rpx; flex: 1; min-width: 0; }
+.inq-status {
+  font-size: 22rpx;
+  padding: 4rpx 12rpx;
+  border-radius: 8rpx;
+  flex-shrink: 0;
+}
+.inq-status.open { background: #fff1f0; color: #cf1322; }
+.inq-status.done { background: #f6ffed; color: #389e0d; }
+.inq-contact { margin-top: 8rpx; font-size: 26rpx; }
+.inq-body { margin-top: 8rpx; font-size: 26rpx; color: #5c524c; }
+.inq-handled { margin-top: 8rpx; font-size: 26rpx; color: #389e0d; }
+.handle-input { margin-top: 16rpx; }
+.mini { margin-top: 12rpx; text-align: center; padding: 16rpx; font-size: 28rpx; }
+
+.fu {
+  padding: 16rpx 0;
+  border-bottom: 1rpx solid var(--color-line, #eee7e1);
+}
+.fu-content { font-size: 28rpx; white-space: pre-wrap; }
+.fu-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8rpx;
+}
 .link { color: #3b82f6; font-size: 24rpx; }
 .link.danger { color: #ef4444; }
-.mini { margin-top: 12rpx; text-align: center; padding: 16rpx; }
+.area { min-height: 120rpx; margin-top: 16rpx; }
+.empty-tip { padding: 12rpx 0 8rpx; }
+.small { font-size: 24rpx; margin-top: 4rpx; }

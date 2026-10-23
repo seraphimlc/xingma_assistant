@@ -1,5 +1,6 @@
 /** 羊毛衫档口小程序入口 */
 const publishQueue = require('./utils/publish-upload-queue');
+const { refreshCustomerTabBadge } = require('./utils/customer-tab-badge');
 
 App({
   globalData: {
@@ -28,6 +29,10 @@ App({
     // 锁屏/回前台：best-effort 续传 pending/failed
     try {
       publishQueue.resumeAll();
+    } catch (e) { /* */ }
+    // 员工：刷新客户 Tab 未读红点
+    try {
+      refreshCustomerTabBadge();
     } catch (e) { /* */ }
   },
   onHide() {

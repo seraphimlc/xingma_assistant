@@ -1,41 +1,65 @@
 <view class="container" wx:if="{{customer}}">
-  <view class="card">
-    <view>ID：{{customer.id}}</view>
-    <view>openid：{{customer.openid}}</view>
-    <view>等级：{{customer.levelCode}}（rank {{customer.rank}}）</view>
-    <view class="muted">首次分享：{{customer.firstShareEventId || '无'}}</view>
+  <!-- 上半：联系方式 -->
+  <view class="card contact-card">
+    <view class="section-title">联系方式</view>
+    <view class="contact-name">{{contact.name}}</view>
+    <view class="contact-phone">{{contact.phone}}</view>
+    <view class="muted tip" wx:if="{{!contact.hasContact}}">客户尚未留下姓名或手机；可看下方询价记录里的快照</view>
+    <view class="btn-primary copy-btn" bindtap="copyContact" wx:if="{{contact.hasContact}}">一键复制联系方式</view>
+    <view class="btn-ghost copy-btn disabled" wx:else>暂无可复制联系方式</view>
   </view>
 
+  <!-- 中间：询价记录 -->
   <view class="card">
-    <view class="section">调整等级</view>
-    <picker mode="selector" range="{{levels}}" range-key="name" value="{{levelIndex}}" bindchange="onLevelPick">
-      <view class="picker">{{levels[levelIndex].name || '选择等级'}}</view>
-    </picker>
-    <view class="btn-primary" style="margin-top: 16rpx;" bindtap="saveLevel">保存等级</view>
+    <view class="section-title">询价记录</view>
+    <view class="section-hint">点「已处理」并填写处理方式；复制上方联系方式去微信沟通即可</view>
+
+    <view class="inq" wx:for="{{inquiries}}" wx:key="id">
+      <view class="inq-head">
+        <text class="inq-product">{{item.productTitle}}</text>
+        <text class="inq-status {{item.isHandled ? 'done' : 'open'}}">{{item.statusLabel}}</text>
+      </view>
+      <view class="muted small">{{item.timeText}}</view>
+      <view class="inq-contact" wx:if="{{item.contactSnap}}">联系快照：{{item.contactSnap}}</view>
+      <view class="inq-body" wx:if="{{item.remarkText}}">备注：{{item.remarkText}}</view>
+      <view class="inq-body muted" wx:elif="{{item.contentText}}">{{item.contentText}}</view>
+      <view class="inq-handled" wx:if="{{item.isHandled && item.handledNote}}">处理说明：{{item.handledNote}}</view>
+
+      <block wx:if="{{!item.isHandled}}">
+        <input
+          class="input handle-input"
+          placeholder="处理方式（如：已微信报价 / 已电话沟通）"
+          value="{{handleDrafts[item.id]}}"
+          data-id="{{item.id}}"
+          bindinput="onHandleNoteInput"
+        />
+        <view class="btn-primary mini" data-id="{{item.id}}" bindtap="markHandled">标记已处理</view>
+      </block>
+    </view>
+    <view class="muted empty-tip" wx:if="{{!inquiries.length}}">暂无询价</view>
   </view>
 
+  <!-- 下半：跟进备忘 -->
   <view class="card">
-    <view class="section">跟进记录</view>
+    <view class="section-title">跟进备忘</view>
+    <view class="section-hint">记下哪天跟客户聊了什么，方便以后回顾</view>
+
     <view class="fu" wx:for="{{followUps}}" wx:key="id">
-      <view>{{item.content}}</view>
-      <view class="muted">{{item.kind}} · {{item.createdAt}}</view>
-      <text class="link danger" data-id="{{item.id}}" bindtap="removeFollow">删除</text>
+      <view class="fu-content">{{item.content}}</view>
+      <view class="fu-meta">
+        <text class="muted">{{item.timeText}}</text>
+        <text class="link danger" data-id="{{item.id}}" bindtap="removeFollow">删除</text>
+      </view>
     </view>
-    <textarea class="input area" placeholder="写一条跟进…" value="{{followContent}}" bindinput="onFollowInput" />
-    <view class="btn-primary mini" bindtap="addFollow">添加跟进</view>
-  </view>
+    <view class="muted empty-tip" wx:if="{{!followUps.length}}">暂无备忘</view>
 
-  <view class="card">
-    <view class="section">商品例外规则</view>
-    <view class="fu" wx:for="{{rules}}" wx:key="id">
-      <view>{{item.effect}} → 商品 {{item.productId}}</view>
-      <text class="link danger" data-id="{{item.id}}" bindtap="removeRule">删除</text>
-    </view>
-    <input class="input" placeholder="商品 ID" value="{{ruleProductId}}" bindinput="onRuleProduct" />
-    <radio-group bindchange="onRuleEffect">
-      <label><radio value="allow" checked="{{ruleEffect==='allow'}}"/>允许</label>
-      <label style="margin-left: 24rpx;"><radio value="deny" checked="{{ruleEffect==='deny'}}"/>禁止</label>
-    </radio-group>
-    <view class="btn-primary mini" bindtap="saveRule">保存规则</view>
+    <textarea
+      class="input area"
+      placeholder="写一条跟进备忘…"
+      value="{{followContent}}"
+      bindinput="onFollowInput"
+      maxlength="500"
+    />
+    <view class="btn-primary mini" bindtap="addFollow">添加备忘</view>
   </view>
 </view>

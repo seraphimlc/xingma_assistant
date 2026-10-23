@@ -2,11 +2,11 @@
 <view class="container">
   <view class="card head">
     <view class="section-title">客户</view>
-    <view class="muted">分享卡片打开后自动建档；可搜昵称/openid、点进详情改等级</view>
+    <view class="muted">分享打开后自动建档；有询价时行上会显示红点，点进详情可复制联系方式</view>
   </view>
 
   <view class="card search-bar">
-    <input class="input" placeholder="搜索昵称 / openid" value="{{q}}" bindinput="onSearchInput" confirm-type="search" bindconfirm="onSearch" />
+    <input class="input" placeholder="搜索姓名 / 手机" value="{{q}}" bindinput="onSearchInput" confirm-type="search" bindconfirm="onSearch" />
     <view class="search-btn" bindtap="onSearch">搜索</view>
   </view>
 
@@ -14,11 +14,18 @@
   <view class="card muted empty" wx:elif="{{!list.length}}">暂无客户。把商品分享出去后，对方打开即出现在这里。</view>
 
   <view class="card row" wx:for="{{list}}" wx:key="id" data-id="{{item.id}}" bindtap="goDetail">
-    <image wx:if="{{item.avatarUrl}}" class="avatar" src="{{item.avatarUrl}}" mode="aspectFill" />
-    <view wx:else class="avatar avatar-ph">{{item.nickShort}}</view>
+    <view class="avatar-wrap">
+      <image wx:if="{{item.avatarUrl}}" class="avatar" src="{{item.avatarUrl}}" mode="aspectFill" />
+      <view wx:else class="avatar avatar-ph">{{item.nickShort}}</view>
+      <view wx:if="{{item.showDot}}" class="row-dot {{item.hasUnreadInquiry ? 'unread' : ''}}"></view>
+    </view>
     <view class="body">
-      <view class="name">{{item.displayName}}</view>
-      <view class="muted small">{{item.levelCode}} · rank {{item.rank}}</view>
+      <view class="name-line">
+        <text class="name">{{item.displayName}}</text>
+        <text wx:if="{{item.hasUnreadInquiry}}" class="badge-unread">新询价</text>
+        <text wx:elif="{{item.inquiryCount}}" class="badge-inq">询价 {{item.inquiryCount}}</text>
+      </view>
+      <view class="muted small">{{item.contactLine}}</view>
     </view>
     <view class="arrow muted">›</view>
   </view>
