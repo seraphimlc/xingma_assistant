@@ -3,7 +3,7 @@
  * 1. 携带 shareId
  * 2. 后台静默 wx.login → 换 JWT（客户看不到登录 UI）
  * 3. GET /api/shares/:shareId/open —— 限制分享占名额 / 公开放行；自动建档
- * 4. 立刻 redirect 到商品详情
+ * 4. 立刻 redirect 到【客户专用】商品页 pages/product/view（非员工 detail）
  */
 const { request, ensureSilentSession } = require('../../../utils/request');
 
@@ -40,7 +40,7 @@ Page({
       ];
       if (bound) qs.push(`boundCustomerId=${bound}`);
       wx.redirectTo({
-        url: `/pages/product/detail/detail?${qs.join('&')}`,
+        url: `/pages/product/view/view?${qs.join('&')}`,
       });
     } catch (e) {
       this.setData({ loading: false, error: e.message || '无法打开分享' });

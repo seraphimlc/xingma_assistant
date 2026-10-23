@@ -8,9 +8,53 @@
 .mini { margin-top: 12rpx; text-align: center; padding: 16rpx; }
 .tag { margin-left: 8rpx; font-size: 22rpx; background: #e0f2fe; color: #0369a1; padding: 2rpx 10rpx; border-radius: 8rpx; }
 
-.avatar-btn { width: 120rpx; height: 120rpx; padding: 0; margin: 0; border-radius: 50%; overflow: hidden; background: #f0ebe6; line-height: 120rpx; font-size: 22rpx; color: #b08a70; }
-.avatar-preview { width: 120rpx; height: 120rpx; }
+.profile-pick { display: flex; flex-direction: column; align-items: center; gap: 20rpx; }
+.avatar-pick {
+  width: 160rpx;
+  height: 160rpx;
+  padding: 0;
+  margin: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #c45c26;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.2;
+}
+.avatar-pick::after { border: none; }
+.avatar-pick-inner {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16rpx;
+  box-sizing: border-box;
+}
+.avatar-pick-text { font-size: 24rpx; color: #fff; text-align: center; line-height: 1.3; }
+.avatar-preview { width: 160rpx; height: 160rpx; display: block; }
+.nick-pill {
+  width: 100%;
+  height: 80rpx;
+  padding: 0 28rpx;
+  background: #fff;
+  border-radius: 999rpx;
+  font-size: 28rpx;
+  color: #333;
+  text-align: center;
+  border: 2rpx solid #e8c8b0;
+  box-sizing: border-box;
+}
+.nick-pill-filled { border-color: #c45c26; color: #c45c26; font-weight: 500; }
 .qr-preview { width: 240rpx; height: 240rpx; background: #fff; border-radius: 12rpx; }
 
 .invite-box { margin-top: 20rpx; padding: 16rpx; background: #faf7f4; border-radius: 12rpx; }
 .invite-code { font-size: 40rpx; font-weight: 700; letter-spacing: 4rpx; color: #c45c26; margin: 12rpx 0; }
+
+.sub-section {
+  margin-top: 8rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #444;
+}

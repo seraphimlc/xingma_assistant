@@ -7,6 +7,7 @@ Page({
     levelIndex: 0,
     followContent: '',
     followUps: [],
+    inquiries: [],
     rules: [],
     ruleProductId: '',
     ruleEffect: 'allow',
@@ -27,9 +28,14 @@ Page({
       const levels = this.data.levels;
       let levelIndex = levels.findIndex((l) => l.id === customer.levelId);
       if (levelIndex < 0) levelIndex = 0;
+      let inquiries = [];
+      try {
+        inquiries = await request({ url: `/api/inquiries?customerId=${encodeURIComponent(id)}` }) || [];
+      } catch (e2) { inquiries = []; }
       this.setData({
         customer,
         followUps: customer.followUps || [],
+        inquiries,
         rules: customer.rules || [],
         levelIndex,
       });

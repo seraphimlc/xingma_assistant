@@ -56,10 +56,10 @@ export class CustomersService {
     return this.repo.list(tenantId, opts);
   }
 
-  /** 客户本人更新昵称头像 */
+  /** 客户本人更新昵称/头像/手机 */
   async updateSelfProfile(
     user: AuthContext,
-    patch: { nickname?: string | null; avatarUrl?: string | null },
+    patch: { nickname?: string | null; avatarUrl?: string | null; phone?: string | null },
   ) {
     const c = await this.ensureProfile(user);
     const updated = await this.repo.update(user.tenantId, c.id, patch);

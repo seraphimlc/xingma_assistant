@@ -1,0 +1,110 @@
+<!-- 客户专用商品页（分享落地）。无编辑/分享/宣传等管理控件。 -->
+<view class="page" wx:if="{{product}}">
+  <!-- 1. 标题 + 款号/面料等 -->
+  <view class="hero">
+    <view class="title">{{product.name}}</view>
+    <view class="meta" wx:if="{{product.styleNo}}">款号 {{product.styleNo}}</view>
+    <view class="meta" wx:if="{{product.material}}">{{product.material}}</view>
+    <view class="meta tags" wx:if="{{product.tags && product.tags.length}}">
+      <text class="tag" wx:for="{{product.tags}}" wx:key="*this">{{item}}</text>
+    </view>
+    <view class="desc" wx:if="{{product.description}}">{{product.description}}</view>
+  </view>
+
+  <!-- 2. 全部图片 -->
+  <view class="gallery" wx:if="{{product.images && product.images.length}}">
+    <image
+      wx:for="{{product.images}}"
+      wx:key="id"
+      src="{{item.url}}"
+      mode="widthFix"
+      class="gallery-img"
+      data-index="{{index}}"
+      show-menu-by-longpress="{{canDownload}}"
+      bindtap="previewImage"
+    />
+  </view>
+
+  <!-- 3. SKU / 价格 -->
+  <view class="section" wx:if="{{skuRows.length || showContactPriceHint}}">
+    <view class="section-title">颜色与价格</view>
+    <view wx:if="{{hasPrice}}" class="sku-grid">
+      <view class="sku-cell" wx:for="{{skuRows}}" wx:key="id">
+        <text class="sku-color">{{item.color || '-'}}</text>
+        <text class="sku-price">{{item.priceText}}</text>
+      </view>
+    </view>
+    <block wx:else>
+      <view class="sku-list-plain">
+        <view class="sku-plain" wx:for="{{skuRows}}" wx:key="id">{{item.color || '-'}}</view>
+      </view>
+      <view class="price-hint" wx:if="{{showContactPriceHint}}">请跟服务人员联系</view>
+    </block>
+  </view>
+
+  <!-- 4. 底部：业主微信二维码 -->
+  <view class="section contact">
+    <view class="section-title">联系微信</view>
+    <view class="qr-box">
+      <image
+        wx:if="{{contactQrUrl}}"
+        src="{{contactQrUrl}}"
+        mode="aspectFit"
+        class="qr-img"
+        show-menu-by-longpress
+      />
+      <view wx:else class="qr-ph">业主微信二维码位</view>
+      <view class="qr-tip">{{contactQrUrl ? '长按识别或保存二维码' : '业主可在设置中上传二维码'}}</view>
+    </view>
+  </view>
+
+  <!-- 轻提示：无联系方式时一次（可关）；主路径是底部询价 -->
+  <view class="soft-tip" wx:if="{{showSoftTip}}">
+    <text class="soft-tip-text">需要报价？点下方「询价」留下手机或姓名即可</text>
+    <text class="soft-tip-close" bindtap="dismissSoftTip">知道了</text>
+  </view>
+
+  <view class="bottom-bar">
+    <view class="inquire-btn" bindtap="openInquirySheet">询价</view>
+  </view>
+
+  <!-- 询价弹层：预填已有联系方式；提交写询价记录 + 档案 -->
+  <view class="contact-mask" wx:if="{{showInquirySheet}}" catchtouchmove="noop">
+    <view class="contact-sheet" catchtap="noop">
+      <view class="contact-sheet-title">询价 · 留下联系方式</view>
+      <view class="contact-sheet-desc">填写手机号或姓名（至少一项），档口稍后联系你</view>
+      <input
+        class="contact-input"
+        type="number"
+        maxlength="20"
+        placeholder="手机号"
+        value="{{contactPhone}}"
+        bindinput="onContactPhone"
+      />
+      <input
+        class="contact-input"
+        type="text"
+        maxlength="32"
+        placeholder="姓名 / 怎么称呼"
+        value="{{contactName}}"
+        bindinput="onContactName"
+      />
+      <input
+        class="contact-input"
+        type="text"
+        maxlength="100"
+        placeholder="备注（可选，如颜色尺码）"
+        value="{{contactRemark}}"
+        bindinput="onContactRemark"
+      />
+      <view class="contact-sheet-actions">
+        <view class="contact-btn ghost" bindtap="closeInquirySheet">取消</view>
+        <view class="contact-btn primary" bindtap="submitInquiry">提交询价</view>
+      </view>
+    </view>
+  </view>
+</view>
+
+<view class="page empty" wx:else>
+  <view class="empty-card">{{error || '加载中…'}}</view>
+</view>

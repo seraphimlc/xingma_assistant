@@ -112,26 +112,38 @@ export class LoginService {
       customerId: c.id,
       nickname: c.nickname,
       avatarUrl: c.avatarUrl,
+      phone: c.phone,
       levelCode: c.levelCode,
       rank: c.rank,
     };
   }
 
-  async updateProfile(user: AuthContext, body: { nickname?: string; avatarUrl?: string }) {
+  async updateProfile(
+    user: AuthContext,
+    body: { nickname?: string; avatarUrl?: string; phone?: string },
+  ) {
     const nickname = body.nickname != null ? String(body.nickname).trim().slice(0, 64) : undefined;
     const avatarUrl = body.avatarUrl != null ? String(body.avatarUrl).trim().slice(0, 512) : undefined;
-    if (nickname === undefined && avatarUrl === undefined) {
-      throw new BadRequestException('请提供 nickname 或 avatarUrl');
+    const phone = body.phone != null ? String(body.phone).trim().slice(0, 32) : undefined;
+    if (nickname === undefined && avatarUrl === undefined && phone === undefined) {
+      throw new BadRequestException('请提供 nickname、avatarUrl 或 phone');
     }
+    const patch: { nickname?: string | null; avatarUrl?: string | null; phone?: string | null } = {};
+    if (nickname !== undefined) patch.nickname = nickname || null;
+    if (avatarUrl !== undefined) patch.avatarUrl = avatarUrl || null;
+    if (phone !== undefined) patch.phone = phone || null;
+
     if (user.role === 'owner' || user.role === 'staff') {
       if (nickname !== undefined) {
         await this.tenants.updateMemberNickname(user.tenantId, user.openid, nickname || null);
       }
+      // 分享授权同步写 customer_profiles，客户列表可见昵称/头像
+      await this.customers.updateSelfProfile(
+        { tenantId: user.tenantId, openid: user.openid, role: 'customer', customerId: user.customerId },
+        patch,
+      );
       return this.getMe(user);
     }
-    const patch: { nickname?: string | null; avatarUrl?: string | null } = {};
-    if (nickname !== undefined) patch.nickname = nickname || null;
-    if (avatarUrl !== undefined) patch.avatarUrl = avatarUrl || null;
     await this.customers.updateSelfProfile(user, patch);
     return this.getMe(user);
   }

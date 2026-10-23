@@ -27,12 +27,12 @@ export class LoginController {
     return this.login.getMe(user);
   }
 
-  /** 授权后回写昵称/头像（客户 → customer_profiles；员工 → tenant_members） */
+  /** 回写昵称/头像/手机（客户 → customer_profiles；员工昵称 → tenant_members） */
   @Patch('me')
   @UseGuards(JwtAuthGuard)
   updateMe(
     @AuthUser() user: AuthContext,
-    @Body() body: { nickname?: string; avatarUrl?: string },
+    @Body() body: { nickname?: string; avatarUrl?: string; phone?: string },
   ) {
     return this.login.updateProfile(user, body || {});
   }

@@ -1,0 +1,232 @@
+.page {
+  min-height: 100vh;
+  background: #f6f3f0;
+  padding-bottom: 180rpx;
+}
+.hero {
+  background: #fff;
+  padding: 36rpx 32rpx 28rpx;
+}
+.title {
+  font-size: 44rpx;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #222;
+}
+.meta {
+  margin-top: 12rpx;
+  font-size: 26rpx;
+  color: #8a8a8a;
+}
+.tags { display: flex; flex-wrap: wrap; gap: 12rpx; }
+.tag {
+  display: inline-block;
+  padding: 4rpx 14rpx;
+  border-radius: 8rpx;
+  background: #f3e8e0;
+  color: #a05a32;
+  font-size: 22rpx;
+}
+.desc {
+  margin-top: 20rpx;
+  font-size: 28rpx;
+  color: #555;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.gallery {
+  margin-top: 16rpx;
+  background: #fff;
+}
+.gallery-img {
+  display: block;
+  width: 100%;
+  background: #efe8e2;
+}
+
+.section {
+  margin-top: 16rpx;
+  background: #fff;
+  padding: 28rpx 32rpx 32rpx;
+}
+.section-title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 20rpx;
+}
+
+.sku-grid {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0 -12rpx;
+}
+.sku-cell {
+  width: calc(50% - 24rpx);
+  margin: 0 12rpx 16rpx;
+  padding: 20rpx 22rpx;
+  border-radius: 12rpx;
+  background: #faf7f4;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-sizing: border-box;
+}
+.sku-color { font-size: 28rpx; color: #333; font-weight: 500; }
+.sku-price { font-size: 28rpx; color: #c45c26; font-weight: 600; }
+
+.sku-list-plain { display: flex; flex-direction: column; gap: 8rpx; }
+.sku-plain {
+  padding: 18rpx 0;
+  border-bottom: 1rpx solid #f0ebe6;
+  font-size: 28rpx;
+  color: #333;
+}
+.sku-plain:last-child { border-bottom: none; }
+.price-hint {
+  margin-top: 20rpx;
+  padding: 20rpx 24rpx;
+  border-radius: 12rpx;
+  background: #fff7f0;
+  color: #c45c26;
+  font-size: 28rpx;
+  text-align: center;
+}
+
+.contact .qr-box {
+  margin-top: 8rpx;
+  padding: 28rpx;
+  border-radius: 16rpx;
+  background: #faf7f4;
+  text-align: center;
+}
+.qr-img {
+  width: 360rpx;
+  height: 360rpx;
+  margin: 0 auto;
+  display: block;
+  border-radius: 12rpx;
+  background: #fff;
+}
+.qr-ph {
+  width: 360rpx;
+  height: 360rpx;
+  margin: 0 auto;
+  line-height: 360rpx;
+  border-radius: 12rpx;
+  border: 2rpx dashed #e0b8a0;
+  color: #b08a70;
+  font-size: 26rpx;
+  background: #fff;
+}
+.qr-tip {
+  margin-top: 16rpx;
+  font-size: 24rpx;
+  color: #8a8a8a;
+}
+
+.empty { padding: 48rpx 32rpx; }
+.empty-card {
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 48rpx 32rpx;
+  text-align: center;
+  color: #8a8a8a;
+}
+
+.soft-tip {
+  position: fixed;
+  left: 24rpx;
+  right: 24rpx;
+  bottom: 140rpx;
+  z-index: 900;
+  background: #fff7f0;
+  border: 1rpx solid #f0e0d4;
+  border-radius: 12rpx;
+  padding: 16rpx 20rpx;
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  box-shadow: 0 4rpx 16rpx rgba(0,0,0,0.06);
+}
+.soft-tip-text { flex: 1; font-size: 24rpx; color: #a05a32; line-height: 1.4; }
+.soft-tip-close { font-size: 24rpx; color: #c45c26; flex-shrink: 0; padding: 8rpx; }
+
+.bottom-bar {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 950;
+  padding: 16rpx 28rpx calc(16rpx + env(safe-area-inset-bottom));
+  background: rgba(255,255,255,0.96);
+  border-top: 1rpx solid #eee;
+  box-sizing: border-box;
+}
+.inquire-btn {
+  height: 88rpx;
+  line-height: 88rpx;
+  text-align: center;
+  background: #c45c26;
+  color: #fff;
+  font-size: 32rpx;
+  font-weight: 600;
+  border-radius: 44rpx;
+}
+
+.contact-mask {
+  position: fixed;
+  left: 0; right: 0; top: 0; bottom: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 1000;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.contact-sheet {
+  width: 100%;
+  background: #fff;
+  border-radius: 24rpx 24rpx 0 0;
+  padding: 36rpx 32rpx calc(36rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
+.contact-sheet-title {
+  font-size: 34rpx;
+  font-weight: 600;
+  color: #222;
+}
+.contact-sheet-desc {
+  margin-top: 10rpx;
+  font-size: 24rpx;
+  color: #8a8a8a;
+  line-height: 1.5;
+}
+.contact-input {
+  margin-top: 20rpx;
+  height: 80rpx;
+  padding: 0 24rpx;
+  background: #f6f3f0;
+  border-radius: 12rpx;
+  font-size: 28rpx;
+  color: #333;
+}
+.contact-sheet-actions {
+  margin-top: 28rpx;
+  display: flex;
+  gap: 20rpx;
+}
+.contact-btn {
+  flex: 1;
+  text-align: center;
+  padding: 22rpx 0;
+  border-radius: 12rpx;
+  font-size: 28rpx;
+}
+.contact-btn.ghost {
+  background: #f0ebe6;
+  color: #666;
+}
+.contact-btn.primary {
+  background: #c45c26;
+  color: #fff;
+  font-weight: 500;
+}

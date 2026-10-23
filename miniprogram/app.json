@@ -5,6 +5,7 @@
     "pages/customer/list/list",
     "pages/jobs/list/list",
     "pages/product/detail/detail",
+    "pages/product/view/view",
     "pages/product/publish/publish",
     "pages/product/edit/edit",
     "pages/product/promo/promo",

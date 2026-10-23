@@ -1,11 +1,12 @@
 const { request } = require('../../../utils/request');
-const { saveProfile } = require('../../../utils/profile');
+const { saveProfileWithAvatarUpload } = require('../../../utils/profile');
 
 Page({
   data: {
     showProfile: true,
     nickname: '',
     avatarUrl: '',
+    phone: '',
     contactQrUrl: '',
     allowCustomerDownload: false,
     isOwner: false,
@@ -59,6 +60,7 @@ Page({
         productLevels: productLevels || [],
         nickname: (me && me.nickname) || '',
         avatarUrl: (me && me.avatarUrl) || '',
+        phone: (me && me.phone) || '',
         contactQrUrl: (tenant && tenant.contactQrUrl) || '',
         allowCustomerDownload: !!(tenant && tenant.allowCustomerDownload),
         members,
@@ -73,11 +75,25 @@ Page({
     if (url) this.setData({ avatarUrl: url });
   },
   onNickname(e) {
-    this.setData({ nickname: e.detail.value });
+    const nickname = ((e.detail && e.detail.value) || '').trim();
+    this.setData({ nickname });
   },
-  async saveProfile() {
+  async saveProfileTap() {
+    const nickname = (this.data.nickname || '').trim();
+    const avatarUrl = this.data.avatarUrl || '';
+    if (!nickname && !avatarUrl) {
+      wx.showToast({ title: '请先点选头像或昵称', icon: 'none' });
+      return;
+    }
     try {
-      await saveProfile({ nickname: this.data.nickname, avatarUrl: this.data.avatarUrl });
+      const { avatarUrl: persisted, nickname: nick } = await saveProfileWithAvatarUpload({
+        nickname: nickname || undefined,
+        avatarUrl: avatarUrl || undefined,
+      });
+      const patch = {};
+      if (persisted) patch.avatarUrl = persisted;
+      if (nick != null) patch.nickname = nick;
+      if (Object.keys(patch).length) this.setData(patch);
       wx.showToast({ title: '已保存', icon: 'success' });
     } catch (e) {
       wx.showToast({ title: e.message || '保存失败', icon: 'none' });

@@ -1,35 +1,64 @@
 <view class="container">
   <view class="card" wx:if="{{showProfile}}">
     <view class="section">我的资料</view>
-    <view class="muted">用于客户列表展示；可跳过</view>
-    <view class="form" style="margin-top:16rpx;">
-      <button class="avatar-btn" open-type="chooseAvatar" bind:chooseavatar="onChooseAvatar">
+    <view class="muted">自愿完善：手机/姓名方便客服联系；头像昵称可选</view>
+    <view class="profile-pick" style="margin-top:20rpx;">
+      <button class="avatar-pick" open-type="chooseAvatar" bind:chooseavatar="onChooseAvatar">
         <image wx:if="{{avatarUrl}}" src="{{avatarUrl}}" class="avatar-preview" mode="aspectFill" />
-        <text wx:else>选头像</text>
+        <view wx:else class="avatar-pick-inner">
+          <text class="avatar-pick-text">点选头像（可选）</text>
+        </view>
       </button>
-      <input class="input" type="nickname" placeholder="昵称" value="{{nickname}}" bindblur="onNickname" bindinput="onNickname" />
-      <view class="btn-primary mini" bindtap="saveProfile">保存资料</view>
+      <input
+        class="nick-pill {{nickname ? 'nick-pill-filled' : ''}}"
+        type="nickname"
+        placeholder="点选或填写昵称（可选）"
+        value="{{nickname}}"
+        bindblur="onNickname"
+        bindconfirm="onNickname"
+      />
+      <input
+        class="input"
+        type="number"
+        maxlength="20"
+        placeholder="手机号（可选）"
+        value="{{phone}}"
+        bindinput="onPhone"
+      />
+      <view class="btn-primary mini" bindtap="saveProfileTap">保存资料</view>
     </view>
   </view>
 
+  <!-- 档口资料（管理员）：成员 / 联系二维码 / 客户下图 — 集中在此 -->
   <view class="card">
-    <view class="section">联系业主二维码</view>
-    <view class="muted">客户详情页展示，方便加微信</view>
+    <view class="section">档口资料</view>
+    <view class="muted">客户打开分享商品页时使用的联系方式与权限</view>
+
+    <view class="sub-section">联系业主二维码</view>
+    <view class="muted">展示在客户商品页底部，方便加微信</view>
     <image wx:if="{{contactQrUrl}}" src="{{contactQrUrl}}" mode="aspectFit" class="qr-preview" style="margin-top:16rpx;" />
     <view class="btn-ghost mini" style="margin-top:16rpx;" bindtap="pickContactQr">{{contactQrUrl ? '更换二维码' : '上传二维码'}}</view>
     <view class="link danger" wx:if="{{contactQrUrl}}" style="margin-top:12rpx;" bindtap="clearContactQr">清除</view>
-  </view>
 
-  <view class="card">
-    <view class="section">客户下载图片</view>
-    <view class="muted">全局开关：开启后客户可在商品详情长按/保存图片到相册；关闭则全店禁止（员工不受影响）</view>
+    <view class="sub-section" style="margin-top:28rpx;">客户下载图片</view>
+    <view class="muted">全局开关：开启后客户可在商品页长按/保存图片；关闭则全店禁止（员工不受影响）</view>
     <view class="seg" style="margin-top:16rpx;">
       <view class="seg-item {{!allowCustomerDownload?'on':''}}" data-v="0" bindtap="onAllowDownloadTap">禁止</view>
       <view class="seg-item {{allowCustomerDownload?'on':''}}" data-v="1" bindtap="onAllowDownloadTap">允许</view>
     </view>
+
+    <view class="sub-section" style="margin-top:28rpx;">当前成员（谁是员工）</view>
+    <view class="row item" wx:for="{{members}}" wx:key="id">
+      <view>
+        <text>{{item.nickname || '未设昵称'}}</text>
+        <text class="tag">{{item.role === 'owner' ? '业主' : '营业员'}}</text>
+      </view>
+      <text class="muted" style="font-size:22rpx;">{{item.openid}}</text>
+    </view>
+    <view class="muted" wx:if="{{!members.length}}">暂无成员</view>
   </view>
 
-<view class="card">
+  <view class="card">
     <view class="section">客户等级</view>
     <view class="muted">纯人工调整，无自动升降级</view>
     <view class="row item" wx:for="{{customerLevels}}" wx:key="id">
@@ -110,17 +139,5 @@
       </view>
     </view>
     <view class="muted" wx:if="{{!invites.length}}">暂无邀请</view>
-  </view>
-
-  <view class="card">
-    <view class="section">当前成员</view>
-    <view class="row item" wx:for="{{members}}" wx:key="id">
-      <view>
-        <text>{{item.nickname || '未设昵称'}}</text>
-        <text class="tag">{{item.role === 'owner' ? '业主' : '营业员'}}</text>
-      </view>
-      <text class="muted" style="font-size:22rpx;">{{item.openid}}</text>
-    </view>
-    <view class="muted" wx:if="{{!members.length}}">暂无成员</view>
   </view>
 </view>

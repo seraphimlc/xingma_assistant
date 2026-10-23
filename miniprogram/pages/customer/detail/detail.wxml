@@ -2,6 +2,8 @@
   <view class="card">
     <view>ID：{{customer.id}}</view>
     <view>openid：{{customer.openid}}</view>
+    <view>姓名：{{customer.nickname || '未填'}}</view>
+    <view>手机：{{customer.phone || '未填'}}</view>
     <view>等级：{{customer.levelCode}}（rank {{customer.rank}}）</view>
     <view class="muted">首次分享：{{customer.firstShareEventId || '无'}}</view>
   </view>
@@ -12,6 +14,17 @@
       <view class="picker">{{levels[levelIndex].name || '选择等级'}}</view>
     </picker>
     <view class="btn-primary" style="margin-top: 16rpx;" bindtap="saveLevel">保存等级</view>
+  </view>
+
+  <view class="card">
+    <view class="section">询价记录</view>
+    <view class="fu" wx:for="{{inquiries}}" wx:key="id">
+      <view>商品 {{item.productId}}</view>
+      <view wx:if="{{item.contactName || item.phone}}">{{item.contactName || ''}} {{item.phone || ''}}</view>
+      <view class="muted">{{item.content}}</view>
+      <view class="muted">{{item.status}} · {{item.createdAt}}</view>
+    </view>
+    <view class="muted" wx:if="{{!inquiries.length}}">暂无询价</view>
   </view>
 
   <view class="card">
