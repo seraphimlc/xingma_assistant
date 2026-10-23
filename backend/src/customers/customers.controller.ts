@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CustomersService } from './customers.service';
+import { ProductsService } from '../products/products.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { Roles, RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser } from '../common/decorators/auth-user.decorator';
@@ -18,7 +19,10 @@ import { AuthContext } from '../common/interfaces/auth-context.interface';
 @Controller('api/customers')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class CustomersController {
-  constructor(private readonly customersService: CustomersService) {}
+  constructor(
+    private readonly customersService: CustomersService,
+    private readonly productsService: ProductsService,
+  ) {}
 
   @Get()
   @Roles('owner', 'staff')
@@ -53,6 +57,21 @@ export class CustomersController {
   @Roles('owner', 'staff')
   removeRule(@AuthUser() user: AuthContext, @Param('ruleId') ruleId: string) {
     return this.customersService.removeRule(user.tenantId, ruleId);
+  }
+
+  /** 该客户访问过的商品（product_view_events） */
+  @Get(':id/viewed-products')
+  @Roles('owner', 'staff')
+  viewedProducts(
+    @AuthUser() user: AuthContext,
+    @Param('id') id: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.productsService.listCustomerViewedProducts(
+      user,
+      id,
+      limit ? parseInt(limit, 10) : 50,
+    );
   }
 
   @Get(':id')

@@ -54,3 +54,15 @@
 .area { min-height: 120rpx; margin-top: 16rpx; }
 .empty-tip { padding: 12rpx 0 8rpx; }
 .small { font-size: 24rpx; margin-top: 4rpx; }
+
+.visit-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid var(--color-line, #eee7e1);
+}
+.visit-row:last-child { border-bottom: none; }
+.visit-body { flex: 1; min-width: 0; }
+.visit-title { font-size: 28rpx; font-weight: 560; }
+.arrow { font-size: 36rpx; }

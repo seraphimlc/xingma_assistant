@@ -33,6 +33,15 @@ function enrichFollow(f) {
   return Object.assign({}, f, { timeText: fmtTime(f.createdAt) });
 }
 
+function enrichViewed(v) {
+  const title = (v.productName || '').trim() || (v.styleNo ? `款号 ${v.styleNo}` : v.productId) || '商品';
+  return Object.assign({}, v, {
+    title,
+    timeText: fmtTime(v.lastViewedAt),
+    countText: v.viewCount > 1 ? `共 ${v.viewCount} 次` : '',
+  });
+}
+
 function buildContact(customer) {
   if (!customer) return { name: '', phone: '', copyText: '', hasContact: false };
   const name = (customer.nickname || '').trim();
@@ -54,6 +63,7 @@ Page({
     id: '',
     contact: { name: '', phone: '', copyText: '', hasContact: false },
     inquiries: [],
+    viewedProducts: [],
     followUps: [],
     followContent: '',
     handleDrafts: {},
@@ -73,7 +83,13 @@ Page({
       } catch (e2) {
         inquiries = [];
       }
-      // 打开详情即标记该客户询价已读
+      let viewedProducts = [];
+      try {
+        const vp = await request({ url: `/api/customers/${id}/viewed-products` });
+        viewedProducts = (vp && vp.items) || [];
+      } catch (e4) {
+        viewedProducts = [];
+      }
       try {
         await request({
           url: '/api/inquiries/mark-read',
@@ -89,6 +105,7 @@ Page({
         contact,
         followUps: (customer.followUps || []).map(enrichFollow),
         inquiries: (inquiries || []).map(enrichInquiry),
+        viewedProducts: (viewedProducts || []).map(enrichViewed),
       });
     } catch (e) {
       wx.showToast({ title: e.message || '失败', icon: 'none' });
@@ -104,6 +121,10 @@ Page({
       data: text,
       success: () => wx.showToast({ title: '已复制，可去微信联系' }),
     });
+  },
+  goProduct(e) {
+    const pid = e.currentTarget.dataset.id;
+    if (pid) wx.navigateTo({ url: `/pages/product/detail/detail?id=${pid}` });
   },
   onFollowInput(e) {
     this.setData({ followContent: e.detail.value });

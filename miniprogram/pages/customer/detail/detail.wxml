@@ -9,7 +9,7 @@
     <view class="btn-ghost copy-btn disabled" wx:else>暂无可复制联系方式</view>
   </view>
 
-  <!-- 中间：询价记录 -->
+  <!-- 询价记录 -->
   <view class="card">
     <view class="section-title">询价记录</view>
     <view class="section-hint">点「已处理」并填写处理方式；复制上方联系方式去微信沟通即可</view>
@@ -39,7 +39,21 @@
     <view class="muted empty-tip" wx:if="{{!inquiries.length}}">暂无询价</view>
   </view>
 
-  <!-- 下半：跟进备忘 -->
+  <!-- 访问过的商品 -->
+  <view class="card">
+    <view class="section-title">访问过的商品</view>
+    <view class="section-hint">来自分享打开/浏览记录；点进可看商品详情</view>
+    <view class="visit-row" wx:for="{{viewedProducts}}" wx:key="productId" data-id="{{item.productId}}" bindtap="goProduct">
+      <view class="visit-body">
+        <view class="visit-title">{{item.title}}</view>
+        <view class="muted small">{{item.timeText}} <text wx:if="{{item.countText}}">· {{item.countText}}</text></view>
+      </view>
+      <view class="arrow muted">›</view>
+    </view>
+    <view class="muted empty-tip" wx:if="{{!viewedProducts.length}}">暂无访问记录</view>
+  </view>
+
+  <!-- 跟进备忘 -->
   <view class="card">
     <view class="section-title">跟进备忘</view>
     <view class="section-hint">记下哪天跟客户聊了什么，方便以后回顾</view>
