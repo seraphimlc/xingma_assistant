@@ -29,12 +29,19 @@ function enrich(j) {
   const progress = j.progress || {};
   const statusLabel = STATUS_LABEL[j.status] || j.status;
   const tone = STATUS_TONE[j.status] || 'muted';
-  const canRetry = j.status === 'failed' && (j.attempts || 0) < (j.maxAttempts || 3);
+  // 失败一律可重试；取消后也可重跑（后端会重置 attempts）
+  const canRetry = j.status === 'failed' || j.status === 'cancelled';
   const canCancel = j.status === 'queued' || j.status === 'running';
+  const cancelLabel = j.status === 'running' ? '停止' : '取消';
+  const retryLabel = j.status === 'cancelled' ? '重跑' : '重试';
   const productId =
     j.productId ||
     (j.payload && j.payload.productId) ||
     (j.result && (j.result.productId || (j.result.product && j.result.product.id))) ||
+    '';
+  const setId =
+    (j.payload && j.payload.setId) ||
+    (j.result && j.result.setId) ||
     '';
   const styleNo =
     j.styleNo ||
@@ -55,13 +62,9 @@ function enrich(j) {
       ? `${progress.done}/${progress.total}`
       : '';
   const isCreateType = j.type === 'publish_product';
-  const isGenType = j.type === 'promo_image' || j.type === 'cover_reselect';
-  // 「查看」：生图/封面有商品即可进宣传图；发品完成进商品
-  const canView = isGenType
-    ? !!productId
-    : isCreateType
-      ? j.status === 'succeeded' && !!productId
-      : j.status === 'succeeded' && !!productId;
+  const isGenType = j.type === 'promo_image' || j.type === 'cover_reselect' || j.type === 'promo_video';
+  // 「查看」：一律进任务明细（进度/错误/关联素材组）
+  const canView = true;
   const busyHint =
     j.status === 'running' || j.status === 'queued'
       ? doneTotal || (progress.step && progress.step !== 'queued' && progress.step !== 'running'
@@ -75,7 +78,10 @@ function enrich(j) {
     tone,
     canRetry,
     canCancel,
+    cancelLabel,
+    retryLabel,
     productId,
+    setId,
     styleNo,
     productThumb,
     doneTotal,
@@ -179,40 +185,29 @@ Page({
 
   async cancel(e) {
     const id = e.currentTarget.dataset.id;
+    const item = (this.data.list || []).find((j) => j.id === id) || {};
+    const verb = item.cancelLabel || '取消';
     const ok = await new Promise((resolve) => {
       wx.showModal({
-        title: '取消任务',
-        content: '确定取消该任务？',
+        title: verb + '任务',
+        content: `确定${verb}该任务？`,
         success: (r) => resolve(!!r.confirm),
       });
     });
     if (!ok) return;
     try {
       await request({ url: `/api/jobs/${id}/cancel`, method: 'POST', data: {} });
-      wx.showToast({ title: '已取消', icon: 'none' });
+      wx.showToast({ title: '已' + verb, icon: 'none' });
       this.load();
     } catch (err) {
-      wx.showToast({ title: err.message || '取消失败', icon: 'none' });
+      wx.showToast({ title: err.message || verb + '失败', icon: 'none' });
     }
   },
 
-  /** 统一「查看」：生图/封面 → 宣传图组；发品 → 商品详情 */
+  /** 统一「查看」：进任务明细（进度/错误/关联素材），不直接整商品素材页 */
   openView(e) {
     const id = e.currentTarget.dataset.id;
-    const item = (this.data.list || []).find((j) => j.id === id) || {};
-    if (!item.canView) {
-      if (item.isCreateType && (item.status === 'queued' || item.status === 'running')) {
-        wx.showToast({ title: '发品进行中，完成后可查看', icon: 'none' });
-        return;
-      }
-      wx.showToast({ title: '暂无关联商品', icon: 'none' });
-      return;
-    }
-    const productId = item.productId || '';
-    if (item.isGenType) {
-      wx.navigateTo({ url: `/pages/product/promo-gallery/promo-gallery?id=${productId}` });
-      return;
-    }
-    wx.navigateTo({ url: `/pages/product/detail/detail?id=${productId}` });
+    if (!id) return;
+    wx.navigateTo({ url: `/pages/jobs/detail/detail?id=${id}` });
   },
 });

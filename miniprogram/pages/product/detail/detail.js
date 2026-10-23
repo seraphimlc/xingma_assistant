@@ -13,6 +13,43 @@ const STATUS_LABEL = {
   succeeded: '已完成',
 };
 
+
+const JOB_STATUS_LABEL = {
+  queued: '排队',
+  running: '在做',
+  succeeded: '完成',
+  failed: '失败',
+  cancelled: '取消',
+};
+const JOB_STATUS_TONE = {
+  queued: 'warn',
+  running: 'run',
+  succeeded: 'ok',
+  failed: 'err',
+  cancelled: 'muted',
+};
+
+function mapProductJob(j) {
+  const progress = j.progress || {};
+  const title =
+    j.title ||
+    (j.payload && j.payload.displayTitle) ||
+    (j.type === 'promo_image' ? '宣传生图' : j.type === 'promo_video' ? '宣传视频' : j.type === 'publish_product' ? '选图发品' : '任务');
+  let hint = '';
+  if (j.status === 'failed') hint = String(j.error || progress.message || '').slice(0, 36);
+  else if (j.status === 'queued' || j.status === 'running') {
+    if (progress.done != null && progress.total != null) hint = `${progress.done}/${progress.total}`;
+    else if (progress.message) hint = String(progress.message).slice(0, 36);
+  }
+  return {
+    id: j.id,
+    title,
+    statusLabel: JOB_STATUS_LABEL[j.status] || j.status,
+    tone: JOB_STATUS_TONE[j.status] || 'muted',
+    hint,
+  };
+}
+
 function mapPromoSetCard(s) {
   const kind = s.kind || s.type || 'image';
   const isVideo = kind === 'video' || kind === 'promo_video';
@@ -63,6 +100,7 @@ Page({
     product: null,
     isStaff: false,
     canDownload: false,
+    shareMode: 'limited',
     id: '',
     shareEventId: '',
     boundCustomerId: '',
@@ -70,34 +108,39 @@ Page({
     previewUrl: '',
     promoSets: [],
     promoSetsLoading: false,
+    productJobs: [],
+    productJobsLoading: false,
     contactQrUrl: '',
   },
   async onLoad(q) {
     const app = getApp();
     const shareEventId = q.shareEventId || '';
     const boundCustomerId = q.boundCustomerId || '';
+    // 分享链路一律进客户专用页，避免员工角色打开后露出管理控件
+    if (shareEventId) {
+      const qs = [`id=${q.id || ''}`, `shareEventId=${shareEventId}`];
+      if (boundCustomerId) qs.push(`boundCustomerId=${boundCustomerId}`);
+      wx.redirectTo({ url: `/pages/product/view/view?${qs.join('&')}` });
+      return;
+    }
     this.setData({
       id: q.id,
       shareEventId,
       boundCustomerId,
       isStaff: app.globalData.role === 'staff' || app.globalData.role === 'owner',
     });
-    if (shareEventId && !app.globalData.token) {
-      try {
-        await ensureSilentSession({ preferRole: 'customer' });
-        this.setData({
-          isStaff: app.globalData.role === 'staff' || app.globalData.role === 'owner',
-        });
-      } catch (e) {
-        wx.showToast({ title: e.message || '鉴权失败', icon: 'none' });
-        return;
-      }
-    }
     await this.load(q.id, shareEventId, boundCustomerId);
+    // 禁用右上角菜单分享：名额/策略只能经页内「发给微信好友」按钮在发卡前创建
+    try {
+      wx.hideShareMenu({ menus: ['shareAppMessage', 'shareTimeline'] });
+    } catch (e) {
+      try { wx.hideShareMenu(); } catch (e2) { /* */ }
+    }
   },
   onShow() {
     if (this.data.isStaff && this.data.id) {
       this.loadPromoSets(this.data.id);
+      this.loadProductJobs(this.data.id);
     }
   },
   async load(id, shareEventId, boundCustomerId) {
@@ -113,6 +156,7 @@ Page({
       this.setData({ product, canDownload });
       if (isStaff) {
         this.loadPromoSets(id);
+        this.loadProductJobs(id);
       } else {
         this.loadMoreProducts(id, shareEventId, boundCustomerId);
         this.loadContactQr();
@@ -137,6 +181,22 @@ Page({
       /* 列表失败不挡详情 */
     }
   },
+  async loadProductJobs(productId) {
+    if (!productId) return;
+    this.setData({ productJobsLoading: true });
+    try {
+      const res = await request({ url: `/api/jobs?productId=${productId}&limit=20` });
+      const items = ((res && res.items) || []).map(mapProductJob);
+      this.setData({ productJobs: items, productJobsLoading: false });
+    } catch (e) {
+      this.setData({ productJobsLoading: false });
+    }
+  },
+  goJobDetail(e) {
+    const id = e.currentTarget.dataset.id;
+    if (!id) return;
+    wx.navigateTo({ url: `/pages/jobs/detail/detail?id=${id}` });
+  },
   async loadMoreProducts(currentId, shareEventId, boundCustomerId) {
     try {
       const qs = ['levelId=pl_open', 'status=on_sale', 'pageSize=8'];
@@ -151,15 +211,21 @@ Page({
       /* ignore */
     }
   },
+  /** 预览与下载解耦：点图始终 previewImage；下载靠长按/保存按钮 */
   previewImage(e) {
-    const url = e.currentTarget.dataset.url;
-    const urls = ((this.data.product && this.data.product.images) || []).map((im) => im.url).filter(Boolean);
-    if (!url || !urls.length) return;
-    if (this.data.canDownload) {
-      wx.previewImage({ urls, current: url });
-    } else {
-      this.setData({ previewUrl: url });
+    const images = (this.data.product && this.data.product.images) || [];
+    const urls = images.map((im) => im && im.url).filter(Boolean);
+    if (!urls.length) return;
+    let idx = Number(e.currentTarget.dataset.index);
+    if (!Number.isFinite(idx) || idx < 0 || idx >= urls.length) {
+      const url = e.currentTarget.dataset.url;
+      idx = Math.max(0, urls.indexOf(url));
     }
+    wx.previewImage({
+      urls,
+      current: urls[idx],
+      fail: () => wx.showToast({ title: '无法预览图片', icon: 'none' }),
+    });
   },
   closePreview() {
     this.setData({ previewUrl: '' });
@@ -219,41 +285,90 @@ Page({
     if (this.data.boundCustomerId) qs.push(`boundCustomerId=${this.data.boundCustomerId}`);
     wx.navigateTo({ url: `/pages/product/detail/detail?${qs.join('&')}` });
   },
-  async createShare() {
-    try {
-      const res = await request({
-        url: '/api/shares',
-        method: 'POST',
-        data: { productId: this.data.id, sharePolicy: 'designated_only' },
-      });
-      wx.setClipboardData({ data: res.path || res.shareId });
-      const n = res.slotLimit != null ? res.slotLimit : 5;
-      wx.showModal({
-        title: '限制分享已创建',
-        content: `仅前 ${n} 位打开链接的客户可查看（不挑选客户）。\nshareId=${res.shareId}\n落地路径已复制`,
-        showCancel: false,
-      });
-    } catch (e) {
-      wx.showToast({ title: e.message || '失败', icon: 'none' });
-    }
+  onShareModeTap(e) {
+    const v = e.currentTarget.dataset.v;
+    if (v === 'open' || v === 'limited') this.setData({ shareMode: v });
   },
-  async createOpenShare() {
+  async ensureShareForNative() {
+    const policy = this.data.shareMode === 'open' ? 'open' : 'designated_only';
+    const cacheKey = policy;
+    if (this._shareCache && this._shareCache[cacheKey] && this._shareCache[cacheKey].shareId) {
+      return this._shareCache[cacheKey];
+    }
+    const res = await request({
+      url: '/api/shares',
+      method: 'POST',
+      data: { productId: this.data.id, sharePolicy: policy },
+    });
+    if (!this._shareCache) this._shareCache = {};
+    this._shareCache[cacheKey] = res;
+    return res;
+  },
+  /** 分享卡封面：优先商品封面，其次首图（微信会裁成约 5:4） */
+  shareCardImageUrl() {
+    const product = this.data.product || {};
+    const images = product.images || [];
+    return (
+      product.coverUrl ||
+      (images[0] && images[0].url) ||
+      ''
+    );
+  },
+  onShareAppMessage(res) {
+    const product = this.data.product || {};
+    const title = (product.name || product.styleNo || '商品分享').trim();
+    const imageUrl = this.shareCardImageUrl();
+    // 分享卡片目标：landing → 客户专用 view；绝不能落到员工 detail
+    const policy = this.data.shareMode === 'open' ? 'open' : 'designated_only';
+    const cached = this._shareCache && this._shareCache[policy];
+    const landingPath = (sid) => `/pages/share/landing/landing?shareId=${sid}`;
+    // 同步 path：有缓存 shareId 用 landing；否则占位 landing（promise 会覆盖为真实 shareId）
+    // 绝不能回退到 pages/product/detail（员工管理页）
+    const syncPath = (cached && cached.shareId)
+      ? landingPath(cached.shareId)
+      : '/pages/share/landing/landing';
+    // 右上角菜单已 hide；若仍触发则尽量用已缓存 share
+    if (!res || res.from !== 'button') {
+      return { title, path: syncPath, imageUrl: imageUrl || undefined };
+    }
+    // 页内 open-type=share：先按所选模式创建 share，再发卡
+    return {
+      title,
+      path: syncPath,
+      imageUrl: imageUrl || undefined,
+      promise: this.ensureShareForNative()
+        .then((shareRes) => {
+          const shareId = shareRes.shareId;
+          // 必须与 app.json 注册页一致：pages/share/landing/landing
+          const path = shareId
+            ? landingPath(shareId)
+            : (shareRes.path || landingPath(''));
+          return { title, path, imageUrl: imageUrl || undefined };
+        })
+        .catch((err) => {
+          wx.showToast({ title: (err && err.message) || '分享准备失败', icon: 'none' });
+          // 失败也不回员工 detail；无有效 shareId 时 landing 会提示缺参
+          return { title, path: landingPath(''), imageUrl: imageUrl || undefined };
+        }),
+    };
+  },
+  onShareTimeline() {
+    // 朋友圈入口已 hideShareMenu；不经页内按钮，不创建 share
+    const product = this.data.product || {};
+    const title = (product.name || product.styleNo || '商品分享').trim();
+    const imageUrl = this.shareCardImageUrl();
+    return {
+      title,
+      query: `id=${this.data.id}`,
+      imageUrl: imageUrl || undefined,
+    };
+  },
+  async loadContactQr() {
     try {
-      const res = await request({
-        url: '/api/shares',
-        method: 'POST',
-        data: { productId: this.data.id, sharePolicy: 'open' },
-      });
-      if (res.path || res.shareId) {
-        wx.setClipboardData({ data: res.path || res.shareId });
-      }
-      wx.showModal({
-        title: '公开分享已创建',
-        content: `不限人数，任何人打开链接可查看。\nshareId=${res.shareId}\n落地路径已复制`,
-        showCancel: false,
-      });
+      const tenant = await request({ url: '/api/tenants/current' });
+      this.setData({ contactQrUrl: (tenant && tenant.contactQrUrl) || '' });
     } catch (e) {
-      wx.showToast({ title: e.message || '失败', icon: 'none' });
+      /* ignore */
     }
   },
   goInquiry() {

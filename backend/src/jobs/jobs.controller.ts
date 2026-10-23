@@ -41,12 +41,14 @@ export class JobsController {
     @AuthUser() user: AuthContext,
     @Query('type') type?: string,
     @Query('status') status?: JobStatus,
+    @Query('productId') productId?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ) {
     return this.jobs.list(user, {
       type,
       status,
+      productId,
       limit: limit ? parseInt(limit, 10) : 50,
       offset: offset ? parseInt(offset, 10) : 0,
     });

@@ -2,9 +2,6 @@
   <view class="card head" wx:if="{{product}}">
     <view class="section-title">{{product.name || '宣传素材'}}</view>
     <view class="muted">款号 {{product.styleNo}} · 图组与视频组同列表</view>
-    <view class="head-actions" wx:if="{{showJobsEntry}}">
-      <view class="btn-ghost full" bindtap="goJobs">任务中心</view>
-    </view>
   </view>
 
   <view class="card muted" wx:if="{{loading && !sets.length}}">加载中…</view>

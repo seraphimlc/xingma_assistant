@@ -93,7 +93,6 @@ Page({
     loading: true,
     actingId: '',
     savingAlbumId: '',
-    showJobsEntry: false,
   },
 
   onLoad(q) {
@@ -138,8 +137,8 @@ Page({
         }
         return enriched;
       });
-      const showJobsEntry = sets.some((s) => s.busy);
-      this.setData({ product, sets, loading: false, showJobsEntry });
+      const anyBusy = sets.some((s) => s.busy);
+      this.setData({ product, sets, loading: false });
       if (focusSetId) {
         // 仅首次从详情深链进来时锁定展开；之后刷新保留用户操作
         this.setData({ focusSetId: '' });
@@ -147,7 +146,7 @@ Page({
           wx.pageScrollTo({ selector: `#set-${focusSetId}`, duration: 300 });
         }, 200);
       }
-      if (showJobsEntry) {
+      if (anyBusy) {
         // 安静轮询：只刷进度，沿用已展示图的签名 URL，避免闪烁
         this.timer = setTimeout(() => this.load({ silent: true }), 4000);
       }
@@ -169,10 +168,6 @@ Page({
       },
     });
   },
-  goJobs() {
-    wx.switchTab({ url: '/pages/jobs/list/list' });
-  },
-
   toggleExpand(e) {
     const id = e.currentTarget.dataset.id;
     const sets = this.data.sets.map((s) => (
@@ -274,23 +269,26 @@ Page({
       wx.showToast({ title: set && set.isVideo ? '请先勾选要保存的视频' : '请先勾选要下载的图片', icon: 'none' });
       return;
     }
-    // 非阻塞：按钮文案显示「保存中…」，不使用 wx.showLoading(mask) 以免挡住操作
     this.setData({ savingAlbumId: setId });
+    wx.showLoading({ title: `保存中 0/${urls.length}`, mask: true });
     try {
       const saver = (set && set.isVideo) ? saveVideoUrlsToAlbum : saveUrlsToAlbum;
       const r = await saver(urls, {
-        onProgress: () => {},
+        onProgress(cur, total) {
+          wx.showLoading({ title: `保存中 ${cur}/${total}`, mask: true });
+        },
       });
+      wx.hideLoading();
       wx.showToast({
         title: r.fail
           ? `成功 ${r.ok} / 失败 ${r.fail}`
           : (set && set.isVideo ? `已保存 ${r.ok} 条视频` : `已保存 ${r.ok} 张到相册`),
         icon: 'none',
         duration: 2500,
-        mask: false,
       });
     } catch (err) {
-      wx.showToast({ title: (err && err.message) || '保存失败', icon: 'none', mask: false });
+      wx.hideLoading();
+      wx.showToast({ title: (err && err.message) || '保存失败', icon: 'none' });
     } finally {
       this.setData({ savingAlbumId: '' });
     }
@@ -388,18 +386,20 @@ Page({
         percent: 5,
       }), null);
     });
-    // 乐观 UI 已显示 busy/progress；按钮「提交中…」即可，勿用 showLoading 遮罩阻塞操作
-    this.setData({ actingId: setId, sets: optimistic, showJobsEntry: true, focusSetId: setId });
+    this.setData({ actingId: setId, sets: optimistic, focusSetId: setId });
+    wx.showLoading({ title: '提交中…', mask: true });
     try {
       await request({
         url: `/api/products/${this.data.id}/promo/sets/${setId}/regenerate`,
         method: 'POST',
         data: whole ? {} : { indexes },
       });
-      wx.showToast({ title: whole ? '已开始整组重生' : '已开始重新生成', icon: 'none', mask: false });
+      wx.hideLoading();
+      wx.showToast({ title: whole ? '已开始整组重生' : '已开始重新生成', icon: 'none' });
       await this.load({ silent: true });
     } catch (err) {
-      wx.showToast({ title: err.message || '提交失败', icon: 'none', mask: false });
+      wx.hideLoading();
+      wx.showToast({ title: err.message || '提交失败', icon: 'none' });
       await this.load({ silent: true });
     } finally {
       this.setData({ actingId: '' });

@@ -124,36 +124,62 @@ export class JobsService {
     payload: Record<string, unknown>,
     opts?: { existingJobId?: string | null; maxAttempts?: number; runAt?: Date },
   ) {
-    const existingId = String(opts?.existingJobId || '').trim();
-    if (existingId) {
-      const repo = this.jobs();
-      const row = await repo.findOne({ where: { id: existingId, tenantId: user.tenantId } });
-      if (row && this.isOwnedBy(row, user) && row.type === type) {
-        const displayTitle = buildJobDisplayTitle(type, payload);
-        const enrichedPayload = {
-          ...payload,
-          displayTitle: (payload as any).displayTitle || displayTitle,
-        };
-        row.status = 'queued';
-        row.payload = enrichedPayload;
-        row.progress = { percent: 0, step: 'queued', message: displayTitle };
-        row.result = null;
-        row.error = null;
-        row.lockedBy = null;
-        row.nextRunAt = opts?.runAt || null;
-        row.startedAt = null;
-        row.finishedAt = null;
-        // 重生视为新一轮，重置 attempts，避免历史失败占满次数
-        row.attempts = 0;
-        if (opts?.maxAttempts) row.maxAttempts = opts.maxAttempts;
-        await repo.save(row);
-        await this.appendEvent(row, 'reused', '复用任务重新排队', {
+    const repo = this.jobs();
+    let row =
+      (String(opts?.existingJobId || '').trim()
+        ? await repo.findOne({
+            where: { id: String(opts?.existingJobId).trim(), tenantId: user.tenantId },
+          })
+        : null) || null;
+
+    // 组 id 兜底：避免 set.jobId 丢失时重生又新开任务中心一行
+    const setId = String((payload as any)?.setId || '').trim();
+    if ((!row || !this.isOwnedBy(row, user) || row.type !== type) && setId) {
+      const owners = this.ownerIds(user);
+      const candidates = await repo.find({
+        where: {
+          tenantId: user.tenantId,
           type,
-          setId: (payload as any)?.setId || null,
-        });
-        this.logger.log(`reuseOrCreate type=${type} jobId=${row.id} setId=${(payload as any)?.setId || '-'}`);
-        return this.toDto(row);
-      }
+          ...(owners.length === 1
+            ? { createdBy: owners[0] }
+            : owners.length
+              ? { createdBy: In(owners) }
+              : {}),
+        },
+        order: { createdAt: 'DESC' },
+        take: 40,
+      });
+      row =
+        candidates.find(
+          (j) => this.isOwnedBy(j, user) && String((j.payload as any)?.setId || '').trim() === setId,
+        ) || null;
+    }
+
+    if (row && this.isOwnedBy(row, user) && row.type === type) {
+      const displayTitle = buildJobDisplayTitle(type, payload);
+      const enrichedPayload = {
+        ...payload,
+        displayTitle: (payload as any).displayTitle || displayTitle,
+      };
+      row.status = 'queued';
+      row.payload = enrichedPayload;
+      row.progress = { percent: 0, step: 'queued', message: displayTitle };
+      row.result = null;
+      row.error = null;
+      row.lockedBy = null;
+      row.nextRunAt = opts?.runAt || null;
+      row.startedAt = null;
+      row.finishedAt = null;
+      // 重生视为新一轮，重置 attempts，避免历史失败占满次数
+      row.attempts = 0;
+      if (opts?.maxAttempts) row.maxAttempts = opts.maxAttempts;
+      await repo.save(row);
+      await this.appendEvent(row, 'reused', '复用任务重新排队', {
+        type,
+        setId: setId || null,
+      });
+      this.logger.log(`reuseOrCreate type=${type} jobId=${row.id} setId=${setId || '-'}`);
+      return this.toDto(row);
     }
     return this.create(user, type, payload, opts);
   }
@@ -219,7 +245,13 @@ export class JobsService {
 
   async list(
     user: AuthContext,
-    query?: { type?: string; status?: JobStatus; limit?: number; offset?: number },
+    query?: {
+      type?: string;
+      status?: JobStatus;
+      productId?: string;
+      limit?: number;
+      offset?: number;
+    },
   ) {
     const take = Math.min(100, Math.max(1, Number(query?.limit) || 50));
     const skip = Math.max(0, Number(query?.offset) || 0);
@@ -231,16 +263,23 @@ export class JobsService {
     };
     if (query?.type) where.type = query.type;
     if (query?.status) where.status = query.status;
-    const [rows, total] = await this.jobs().findAndCount({
+    // 按商品筛时多取一些再内存过滤（payload JSON），保证详情页能列全
+    const productId = String(query?.productId || '').trim();
+    const fetchTake = productId ? Math.min(200, Math.max(take * 4, 80)) : take;
+    const [rows] = await this.jobs().findAndCount({
       where,
       order: { createdAt: 'DESC' },
-      take,
-      skip,
+      take: fetchTake,
+      skip: productId ? 0 : skip,
     });
     let items = rows.map((r) => this.toDto(r));
+    if (productId) {
+      items = items.filter((it) => String(it.productId || '').trim() === productId);
+      items = items.slice(skip, skip + take);
+    }
     items = dedupePromoJobs(items);
     await this.enrichProductMeta(user.tenantId, items);
-    return { items, total: items.length < rows.length ? items.length : total };
+    return { items, total: items.length };
   }
 
   async listEvents(user: AuthContext, jobId: string, limit = 50) {
@@ -271,20 +310,21 @@ export class JobsService {
     if (row.status === 'running' || row.status === 'queued') {
       throw new BadRequestException('任务仍在排队或执行中');
     }
-    if (row.status === 'cancelled') {
-      throw new BadRequestException('已取消的任务不可重试，请新建');
+    if (row.status === 'succeeded') {
+      throw new BadRequestException('已完成的任务无需重试');
     }
-    if (row.attempts >= row.maxAttempts) {
-      throw new BadRequestException(`已达最大重试次数 ${row.maxAttempts}`);
-    }
+    // 失败 / 取消一律可重跑：重置 attempts，强制重新排队
     row.status = 'queued';
     row.error = null;
     row.finishedAt = null;
     row.lockedBy = null;
     row.nextRunAt = null;
+    row.startedAt = null;
+    row.attempts = 0;
     row.progress = { percent: 0, step: 'queued', message: '重新排队' };
     await repo.save(row);
-    await this.appendEvent(row, 'retry', '用户触发重试');
+    await this.appendEvent(row, 'retry', '用户触发重试（已重置次数）');
+    await this.revivePromoSetForRequeuedJob(row);
     return this.toDto(row);
   }
 
@@ -303,6 +343,7 @@ export class JobsService {
     row.progress = { ...(row.progress || {}), step: 'cancelled', message: '已取消', percent: row.progress?.['percent'] as number ?? 0 };
     await repo.save(row);
     await this.appendEvent(row, 'cancel', '用户取消');
+    await this.markPromoSetTerminal(row, 'failed', '任务已取消');
     return this.toDto(row);
   }
 
@@ -368,6 +409,42 @@ export class JobsService {
     return n;
   }
 
+  /** 任务终态（失败/取消）时，把仍挂 generating 的素材组收尾，避免素材页永远「生成中」 */
+  private async markPromoSetTerminal(
+    job: JobEntity,
+    status: 'failed' | 'done' | 'partial',
+    errMsg?: string,
+  ) {
+    if ((job.type !== 'promo_image' && job.type !== 'promo_video') || !this.dataSource) return;
+    const setId = String((job.payload as any)?.setId || '').trim();
+    if (!setId) return;
+    try {
+      const sets = this.dataSource.getRepository(PromoSetEntity);
+      const row = await sets.findOne({ where: { id: setId, tenantId: job.tenantId } });
+      if (!row) return;
+      if (row.status !== 'generating') {
+        return;
+      }
+      row.status = status;
+      if (status === 'failed' && Array.isArray(row.images) && row.images.length) {
+        row.images = row.images.map((img: any) => {
+          if (img && (img.status === 'pending' || img.status === 'running')) {
+            return {
+              ...img,
+              status: 'failed',
+              error: String(errMsg || '任务失败').slice(0, 200),
+            };
+          }
+          return img;
+        });
+      }
+      await sets.save(row);
+      this.logger.log(`promo_set ${setId} → ${status} (job ${job.id} terminal)`);
+    } catch (e) {
+      this.logger.warn(`markPromoSetTerminal: ${(e as Error).message}`);
+    }
+  }
+
   /** promo_image 重排队：若 set 误为 failed，改回 generating（generating 保持不动） */
   private async revivePromoSetForRequeuedJob(job: JobEntity) {
     if ((job.type !== 'promo_image' && job.type !== 'promo_video') || !this.dataSource) return;
@@ -379,19 +456,20 @@ export class JobsService {
         where: { id: setId, tenantId: job.tenantId },
       });
       if (!row) return;
-      if (row.status === 'failed') {
+      // 用户重试 / reclaim：失败或其它非完成态都拉回 generating，并挂上本 job
+      if (row.status !== 'done' && row.status !== 'partial') {
+        const prev = row.status;
         row.status = 'generating';
         row.jobId = job.id;
         await sets.save(row);
-        this.logger.log(
-          `promo_set ${setId} failed→generating (job reclaim ${job.id})`,
-        );
-      } else if (row.status === 'generating' && row.jobId !== job.id) {
-        // 仍挂着本 job 或空 jobId 时对齐
-        if (!row.jobId) {
-          row.jobId = job.id;
-          await sets.save(row);
+        if (prev !== 'generating') {
+          this.logger.log(
+            `promo_set ${setId} ${prev}→generating (job requeue ${job.id})`,
+          );
         }
+      } else if (row.jobId !== job.id) {
+        row.jobId = job.id;
+        await sets.save(row);
       }
     } catch (e) {
       this.logger.warn(
@@ -489,6 +567,7 @@ export class JobsService {
     job.progress = { ...(job.progress || {}), step: 'failed', message: msg };
     await this.jobs().save(job);
     await this.appendEvent(job, 'failed', msg, null, 'error');
+    await this.markPromoSetTerminal(job, 'failed', msg);
   }
 
   async updateProgress(jobId: string, tenantId: string, patch: Partial<JobProgress>) {
@@ -674,7 +753,7 @@ function dedupePromoJobs<T extends {
   const seenTpl = new Set<string>();
   const out: T[] = [];
   for (const it of items) {
-    if (it.type !== 'promo_image') {
+    if (it.type !== 'promo_image' && it.type !== 'promo_video') {
       out.push(it);
       continue;
     }

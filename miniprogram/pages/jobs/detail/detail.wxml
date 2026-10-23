@@ -1,0 +1,36 @@
+<view class="container">
+  <view class="card muted" wx:if="{{loading && !job}}">加载中…</view>
+
+  <block wx:if="{{job}}">
+    <view class="card">
+      <view class="title-row">
+        <view class="section-title">{{job.title}}</view>
+        <text class="st st-{{job.tone}}">{{job.statusLabel}}</text>
+      </view>
+      <view class="muted small" wx:if="{{job.styleNo}}">款号 {{job.styleNo}}</view>
+      <view class="muted small">{{job.typeLabel}} · {{job.createdText}}</view>
+    </view>
+
+    <view class="card" wx:if="{{job.busy || job.doneTotal || job.progressMessage}}">
+      <view class="section-title">进度</view>
+      <view class="bar-wrap" wx:if="{{job.busy}}">
+        <view class="bar"><view class="bar-fill" style="width: {{job.percent}}%;"></view></view>
+      </view>
+      <view class="muted" wx:if="{{job.doneTotal}}">{{job.doneTotal}}</view>
+      <view class="muted" wx:if="{{job.progressMessage}}">{{job.progressMessage}}</view>
+    </view>
+
+    <view class="card err" wx:if="{{job.error}}">
+      <view class="section-title">错误</view>
+      <text class="err-body" user-select>{{job.error}}</text>
+    </view>
+
+    <view class="card">
+      <view class="ops">
+        <view class="btn-ghost ops-btn" wx:if="{{job.canCancel}}" bindtap="cancel">{{job.cancelLabel}}</view>
+        <view class="btn-primary ops-btn" wx:if="{{job.canRetry}}" bindtap="retry">{{job.retryLabel}}</view>
+      </view>
+      <view class="muted small" style="margin-top:12rpx;" wx:if="{{!job.canCancel && !job.canRetry}}">当前无需操作</view>
+    </view>
+  </block>
+</view>

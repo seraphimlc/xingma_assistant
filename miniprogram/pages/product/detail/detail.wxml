@@ -15,6 +15,7 @@
           src="{{item.url}}"
           mode="aspectFill"
           class="thumb"
+          data-index="{{index}}"
           data-url="{{item.url}}"
           show-menu-by-longpress="{{canDownload}}"
           bindtap="previewImage"
@@ -35,10 +36,15 @@
 
   <block wx:if="{{isStaff}}">
     <view class="card">
-      <view class="section-title">分享</view>
-      <view class="btn-primary" bindtap="createShare">限制分享</view>
-      <view style="height:16rpx;"></view>
-      <view class="btn-ghost" bindtap="createOpenShare">公开分享</view>
+      <view class="section-title">分享给客户</view>
+      <view class="section-hint">选好模式后，点按钮用微信发给好友（客户从分享卡片打开，无需复制链接）</view>
+      <view class="seg" style="margin-top:12rpx;">
+        <view class="seg-item {{shareMode==='limited'?'on':''}}" data-v="limited" bindtap="onShareModeTap">限制分享</view>
+        <view class="seg-item {{shareMode==='open'?'on':''}}" data-v="open" bindtap="onShareModeTap">公开分享</view>
+      </view>
+      <view class="muted small" style="margin-top:12rpx;" wx:if="{{shareMode==='limited'}}">仅前几位打开卡片的客户可看（不挑选客户）</view>
+      <view class="muted small" style="margin-top:12rpx;" wx:else>不限人数，任何人打开卡片可看</view>
+      <button class="btn-primary share-btn" open-type="share" style="margin-top:20rpx;">发给微信好友</button>
     </view>
 
     <view class="card">
@@ -89,6 +95,19 @@
         </view>
       </view>
       <view class="btn-ghost" style="margin-top:20rpx;" bindtap="goPromoMaterials">新建素材</view>
+    </view>
+
+    <view class="card">
+      <view class="section-title">本商品任务</view>
+      <view class="muted small" wx:if="{{productJobsLoading && !productJobs.length}}">加载任务…</view>
+      <view class="muted small" wx:elif="{{!productJobs.length}}">暂无任务</view>
+      <view class="job-mini" wx:for="{{productJobs}}" wx:key="id" data-id="{{item.id}}" bindtap="goJobDetail">
+        <view class="job-mini-main">
+          <text class="job-mini-title">{{item.title}}</text>
+          <text class="muted small" wx:if="{{item.hint}}">{{item.hint}}</text>
+        </view>
+        <text class="st st-{{item.tone}}">{{item.statusLabel}}</text>
+      </view>
     </view>
 
     <view class="card">

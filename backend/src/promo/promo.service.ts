@@ -1244,7 +1244,7 @@ export class PromoService implements OnModuleInit {
     };
   }
 
-  /** 生成成功：upsert 宣传图组 + 自动写入 media_assets / coverMediaIds */
+  /** 生成成功：upsert 宣传图组 + media_assets；宣传图绝不写入商品 coverMediaIds */
   private async persistSetAfterGenerate(
     user: AuthContext,
     productId: string,
@@ -1385,12 +1385,15 @@ export class PromoService implements OnModuleInit {
       /* ignore */
     }
 
+    // 站规：宣传图只进 promo_sets / media_assets(promoSetId)，不进商品图 coverMediaIds
     if (addedMediaIds.length) {
-      const covers = [...(product.coverMediaIds || [])];
-      for (const mid of addedMediaIds) {
-        if (!covers.includes(mid)) covers.push(mid);
+      const covers = (product.coverMediaIds || []).filter((id: string) => !addedMediaIds.includes(id));
+      // 顺带清掉历史误写入的本组宣传图
+      const setMediaIds = images.map((i) => i.mediaId).filter(Boolean) as string[];
+      const cleaned = covers.filter((id: string) => !setMediaIds.includes(id));
+      if (cleaned.length !== (product.coverMediaIds || []).length) {
+        await this.products.update(user, productId, { coverMediaIds: cleaned });
       }
-      await this.products.update(user, productId, { coverMediaIds: covers });
     }
     return { setId, caption };
   }
@@ -1665,10 +1668,10 @@ export class PromoService implements OnModuleInit {
       const items = [...(imageJobs.items || []), ...(videoJobs.items || [])];
       for (const j of items) {
         if ((j.payload as any)?.productId !== productId) continue;
-        if (j.status !== 'queued' && j.status !== 'running') continue;
         const sid = (j.payload as any)?.setId as string | undefined;
         const hit = sid && dtos.find((d) => d.id === sid);
-        if (hit) {
+        if (!hit) continue;
+        if (j.status === 'queued' || j.status === 'running') {
           hit.status = 'generating';
           hit.jobId = j.id;
           (hit as any).progress = j.progress;
@@ -1677,6 +1680,21 @@ export class PromoService implements OnModuleInit {
             hit.kind = 'video';
             hit.type = 'video';
           }
+          continue;
+        }
+        if (
+          hit.status === 'generating' &&
+          hit.jobId === j.id &&
+          (j.status === 'failed' || j.status === 'cancelled')
+        ) {
+          hit.status = 'failed';
+          (hit as any).busy = false;
+          try {
+            await this.setsRepo().update(
+              { id: hit.id, tenantId: user.tenantId },
+              { status: 'failed' },
+            );
+          } catch { /* ignore */ }
         }
       }
     } catch {
@@ -1727,6 +1745,14 @@ export class PromoService implements OnModuleInit {
         if (fj.status === 'queued' || fj.status === 'running') {
           dto.status = 'generating';
           (dto as any).busy = true;
+        } else if (
+          row.status === 'generating' &&
+          (fj.status === 'failed' || fj.status === 'cancelled')
+        ) {
+          dto.status = 'failed';
+          (dto as any).busy = false;
+          row.status = 'failed';
+          await this.setsRepo().save(row);
         }
       } catch {
         /* ignore */
@@ -1811,17 +1837,20 @@ export class PromoService implements OnModuleInit {
     }
   }
 
-  /** 把选中的结果图存为商品图片（media_assets + 追加 coverMediaIds）；主路径已改为生成即关联，保留兼容 */
+  /**
+   * 兼容旧接口：仅确保宣传结果落 media_assets（带 promo 路径），
+   * 绝不写入商品 coverMediaIds（商品图与宣传图分离）。
+   */
   async saveToProduct(user: AuthContext, productId: string, jobId: string, body: { indexes?: number[] }) {
     const job = this.loadJob(user, productId, jobId);
-    const product: any = await this.products.getDetail(user, productId);
+    await this.products.getDetail(user, productId);
     if (!(this.dataSource && process.env.DB_ENABLED === 'true')) throw new BadRequestException('需开启数据库');
     const repo = this.dataSource.getRepository(MediaAsset);
     const want = body?.indexes?.length ? body.indexes : job.items.map((i) => i.index);
     const added: string[] = [];
     for (const it of job.items) {
       if (!want.includes(it.index) || it.status !== 'done' || !it.objectKey || it.savedMediaId) continue;
-      const st = fs.statSync(path.join(this.storageRoot(), it.objectKey));
+      const stInfo = fs.statSync(path.join(this.storageRoot(), it.objectKey));
       const saved = await repo.save(
         repo.create({
           tenantId: user.tenantId,
@@ -1830,17 +1859,14 @@ export class PromoService implements OnModuleInit {
           provider: this.oss.mediaProvider(),
           objectKey: it.objectKey,
           mimeType: it.objectKey.endsWith('.jpg') ? 'image/jpeg' : 'image/png',
-          sizeBytes: String(st.size),
+          sizeBytes: String(stInfo.size),
           status: 'active',
         }),
       );
       it.savedMediaId = saved.id;
       added.push(saved.id);
     }
-    if (added.length) {
-      await this.products.update(user, productId, { coverMediaIds: [...(product.coverMediaIds || []), ...added] });
-    }
     this.saveJob(job);
-    return { added, job: this.jobDto(job) };
+    return { added, job: this.jobDto(job), mixedIntoProductImages: false };
   }
 }

@@ -2,7 +2,7 @@
 <view class="container">
   <view class="card head">
     <view class="section-title">任务中心</view>
-    <view class="muted">发品、宣传图等后台任务：看进度、失败可重试。中断的任务会自动重新排队继续，不会轻易丢掉。</view>
+    <view class="muted">发品、宣传图等后台任务：看进度、失败可重试、生成中可停止。中断的任务会自动重新排队继续。</view>
   </view>
 
   <scroll-view scroll-x class="chips-row" enable-flex>
@@ -41,7 +41,7 @@
       </view>
 
       <view class="job-main">
-        <view class="job-title-block">
+        <view class="job-title-block" data-id="{{item.id}}" bindtap="openView">
           <text class="job-title">{{item.title}}</text>
           <text class="muted small" wx:if="{{item.styleNo}}">款号 {{item.styleNo}}</text>
           <text class="muted small" wx:elif="{{item.createdText}}">{{item.createdText}}</text>
@@ -55,8 +55,8 @@
           </view>
           <view class="foot-ops">
             <text class="link" wx:if="{{item.canView}}" data-id="{{item.id}}" bindtap="openView">查看</text>
-            <text class="link" wx:if="{{item.canCancel}}" data-id="{{item.id}}" bindtap="cancel">取消</text>
-            <text class="link primary" wx:if="{{item.canRetry}}" data-id="{{item.id}}" bindtap="retry">重试</text>
+            <text class="link" wx:if="{{item.canCancel}}" data-id="{{item.id}}" bindtap="cancel">{{item.cancelLabel}}</text>
+            <text class="link primary" wx:if="{{item.canRetry}}" data-id="{{item.id}}" bindtap="retry">{{item.retryLabel}}</text>
           </view>
         </view>
       </view>
