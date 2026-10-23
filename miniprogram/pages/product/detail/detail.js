@@ -244,11 +244,21 @@ Page({
     this._shareCache[cacheKey] = res;
     return res;
   },
+  /** 分享卡封面：优先商品封面，其次首图（微信会裁成约 5:4） */
+  shareCardImageUrl() {
+    const product = this.data.product || {};
+    const images = product.images || [];
+    return (
+      product.coverUrl ||
+      (images[0] && images[0].url) ||
+      ''
+    );
+  },
   onShareAppMessage() {
     const product = this.data.product || {};
     const title = (product.name || product.styleNo || '商品分享').trim();
-    const images = product.images || [];
-    const imageUrl = (images[0] && images[0].url) || product.coverUrl || '';
+    const imageUrl = this.shareCardImageUrl();
+    // 同步返回作占位；promise 解析后用落地页 path（带 shareId）
     const fallbackPath = `/pages/product/detail/detail?id=${this.data.id}`;
     return {
       title,
@@ -256,7 +266,11 @@ Page({
       imageUrl: imageUrl || undefined,
       promise: this.ensureShareForNative()
         .then((res) => {
-          const path = res.path || `/pages/share/landing?shareId=${res.shareId}`;
+          const shareId = res.shareId;
+          // 必须与 app.json 注册页一致：pages/share/landing/landing
+          const path = shareId
+            ? `/pages/share/landing/landing?shareId=${shareId}`
+            : (res.path || fallbackPath);
           return { title, path, imageUrl: imageUrl || undefined };
         })
         .catch((err) => {
@@ -268,8 +282,7 @@ Page({
   onShareTimeline() {
     const product = this.data.product || {};
     const title = (product.name || product.styleNo || '商品分享').trim();
-    const images = product.images || [];
-    const imageUrl = (images[0] && images[0].url) || product.coverUrl || '';
+    const imageUrl = this.shareCardImageUrl();
     const open = this._shareCache && this._shareCache.open;
     const query = open && open.shareId
       ? `shareId=${open.shareId}`

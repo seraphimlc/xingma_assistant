@@ -270,7 +270,7 @@ export class SharesService {
       productId: rec.productId,
       sharePolicy: rec.sharePolicy,
       slotLimit: policy === 'designated_only' ? rec.slotLimit : null,
-      path: `/pages/share/landing?shareId=${rec.id}`,
+      path: `/pages/share/landing/landing?shareId=${rec.id}`,
     };
   }
 
