@@ -707,7 +707,11 @@ export async function buildPublishSuggestion(
       }
     }
     await Promise.all(Array.from({ length: Math.min(concurrency, targets.length) }, () => worker()));
-    ocrNote = notes.slice(0, 3).join('；') || ocrNote;
+    // 保留全部 OCR 备注（含吊牌）；过长时仍优先保留含 hangtag/款号/失败 的条目
+    const prefer = notes.filter((n) => /hangtag|吊牌|款号|失败|不可用|无有效|异常/i.test(n));
+    const rest = notes.filter((n) => !prefer.includes(n));
+    const kept = [...prefer, ...rest].slice(0, 8);
+    ocrNote = kept.join('；') || ocrNote;
 
     // 仅本机 Mac Vision 开启时，对颜色不足的多色图补跑分条
     if (macVisionOcrEnabled()) {
@@ -809,6 +813,30 @@ export async function buildPublishSuggestion(
     }
   }
 
+  // 吊牌图若首轮并发 OCR 为空/失败（常见于超时 abort），单独串行重试一次再抽款号
+  const hangtagImgs = images.filter((i) => i.role === 'hangtag');
+  for (const img of hangtagImgs) {
+    const existing = String(img.ocrText || '').trim();
+    const hasStyleHint = /款号|\d{5,6}/.test(existing);
+    if (existing && hasStyleHint) continue;
+    const asset = assets.find((a) => a.mediaId === img.mediaId);
+    if (!asset?.localPath) continue;
+    try {
+      analyzeLogger.log(`hangtag OCR retry mediaId=${img.mediaId} prevLen=${existing.length}`);
+      const r = await tryOcr(asset.localPath, { vision: opts?.vision });
+      if (r.used) ocrUsed = true;
+      if (r.text) {
+        ocrMap.set(asset.mediaId, r.text);
+        img.ocrText = r.text;
+        ocrNote = `${ocrNote}；吊牌重试 ${path.basename(asset.filename)}: ${r.note}`;
+      } else {
+        ocrNote = `${ocrNote}；吊牌重试 ${path.basename(asset.filename)}: ${r.note || '无文字'}`;
+      }
+    } catch (e: any) {
+      ocrNote = `${ocrNote}；吊牌重试失败 ${String(e?.message || e).slice(0, 80)}`;
+    }
+  }
+
   // StyleNo 只从真实吊牌/标签 OCR 抽取——禁止文件名/临时号冒充
   const hangtagText = images
     .filter((i) => i.role === 'hangtag')
@@ -821,13 +849,24 @@ export async function buildPublishSuggestion(
     styleNo =
       extractStyleNo(hangtagText, []) || hangFields['款号'] || fields['款号'] || '';
   }
+  // 重试后若吊牌读出颜色而首轮 colors 仍占位，补进颜色列表
+  if (hangtagText) {
+    for (const c of extractColorsFromText(hangtagText)) {
+      if (!colors.includes(c)) colors.push(c);
+    }
+    colors = normalizeColorList(colors);
+  }
   styleNo = String(styleNo || '').trim().replace(/[A-Za-z]$/, '');
   if (styleNo && /^V\d{12}/i.test(styleNo)) styleNo = '';
 
-  let material = extractMaterial(allText, fields);
-  let styleName = fields['款式'] || '';
-  let weight = fields['克重'] || '';
-  let sizeText = extractSizeText(allText, fields);
+  // 吊牌重试后的文字并入字段抽取
+  const allText2 = hangtagText ? `${allText}\n${hangtagText}` : allText;
+  const fields2 = hangtagText ? parseBracketFields(allText2) : fields;
+
+  let material = extractMaterial(allText2, fields2);
+  let styleName = fields2['款式'] || '';
+  let weight = fields2['克重'] || '';
+  let sizeText = extractSizeText(allText2, fields2);
 
   let colorSource: ColorSuggestionSource = 'ocr';
   let colorSourceNote = '';
