@@ -164,7 +164,7 @@ Page({
             }))
           : [{ color: '', price: '' }],
         levelIndex,
-        images: (p.images || []).filter((im) => im && im.url && !im.isPromo),
+        images: (p.images || []).filter((im) => im && im.url),
       });
     } catch (e) {
       wx.showToast({ title: e.message || '加载失败', icon: 'none' });
@@ -298,7 +298,7 @@ Page({
                 if (res.statusCode >= 200 && res.statusCode < 300) {
                   try {
                     const body = JSON.parse(res.data);
-                    if (body.images) this.setData({ images: body.images.filter((im) => im && im.url && !im.isPromo) });
+                    if (body.images) this.setData({ images: body.images.filter((im) => im && im.url) });
                     resolve(body);
                   } catch (e) {
                     reject(new Error('上传响应解析失败'));
@@ -341,7 +341,7 @@ Page({
         method: 'DELETE',
         data: {},
       });
-      this.setData({ images: (p.images || []).filter((im) => im && im.url && !im.isPromo) });
+      this.setData({ images: (p.images || []).filter((im) => im && im.url) });
     } catch (err) {
       wx.showToast({ title: err.message || '删除失败', icon: 'none' });
     }

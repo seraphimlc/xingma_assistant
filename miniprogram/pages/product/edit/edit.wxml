@@ -103,10 +103,31 @@
           catchtouchend="onImgTouchEnd"
           catchtouchcancel="onImgTouchEnd"
         >
-          <image src="{{item.url}}" mode="aspectFill" class="thumb" data-index="{{index}}" data-url="{{item.url}}" catchtap="previewImage" />
+          <video
+            wx:if="{{item.type === 'video'}}"
+            src="{{item.url}}"
+            class="thumb"
+            object-fit="cover"
+            controls="{{false}}"
+            show-center-play-btn="{{false}}"
+            show-play-btn="{{false}}"
+            muted
+            data-index="{{index}}"
+            catchtap="previewImage"
+          ></video>
+          <image
+            wx:else
+            src="{{item.url}}"
+            mode="aspectFill"
+            class="thumb"
+            data-index="{{index}}"
+            data-url="{{item.url}}"
+            catchtap="previewImage"
+          />
           <view class="img-del" data-id="{{item.id}}" catchtap="removeImage">×</view>
           <view class="img-cover-badge" wx:if="{{index===0}}">封面</view>
-          <view class="img-mark" wx:if="{{item.isPromo}}">AI</view>
+          <view class="img-mark" wx:if="{{item.type === 'video'}}">视频</view>
+          <view class="img-mark" wx:elif="{{item.isPromo}}">AI</view>
         </view>
         <view class="img-cell add {{uploading ? 'disabled' : ''}}" bindtap="addImages">
           <text class="add-plus">+</text>

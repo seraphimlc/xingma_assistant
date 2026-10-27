@@ -53,12 +53,13 @@
 
     <view class="card">
       <view class="ops">
+        <view class="btn-primary ops-btn {{appendingCover ? 'disabled' : ''}}" wx:if="{{job.canAppendToProduct}}" bindtap="appendToProduct">{{appendingCover ? '追加中…' : '追加到商品'}}</view>
         <view class="btn-ghost ops-btn" wx:if="{{job.canOpenGallery}}" bindtap="openGallery">查看素材</view>
         <view class="btn-primary ops-btn" wx:if="{{job.canOpenProduct}}" bindtap="openProduct">打开商品</view>
         <view class="btn-ghost ops-btn" wx:if="{{job.canCancel}}" bindtap="cancel">{{job.cancelLabel}}</view>
         <view class="btn-primary ops-btn" wx:if="{{job.canRetry}}" bindtap="retry">{{job.retryLabel}}</view>
       </view>
-      <view class="muted small" style="margin-top:12rpx;" wx:if="{{!job.canCancel && !job.canRetry && !job.canOpenGallery && !job.canOpenProduct}}">当前无需操作</view>
+      <view class="muted small" style="margin-top:12rpx;" wx:if="{{!job.canCancel && !job.canRetry && !job.canOpenGallery && !job.canOpenProduct && !job.canAppendToProduct}}">当前无需操作</view>
     </view>
   </block>
 </view>

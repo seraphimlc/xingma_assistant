@@ -80,6 +80,11 @@
 
       <view class="media-actions" wx:if="{{!detailSet.busy && (detailSet.done || detailSet.status==='partial' || detailSet.status==='failed' || detailSet.errorText)}}">
         <view
+          class="btn-primary media-btn {{appendingCover ? 'disabled' : ''}}"
+          bindtap="appendToProduct"
+          wx:if="{{detailSet.canAppendToProduct}}"
+        >{{appendingCover ? '追加中…' : '追加到商品'}}</view>
+        <view
           class="btn-primary media-btn"
           data-id="{{detailSet.id}}"
           bindtap="saveToAlbum"

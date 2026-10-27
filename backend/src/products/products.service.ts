@@ -80,6 +80,101 @@ export class ProductsService {
     return uniq.filter((id) => ok.has(id));
   }
 
+  /**
+   * 编辑保存用：新加入的仍拒宣传图；已在 coverMediaIds 上的（含「追加到商品」）原序保留。
+   */
+  private async sanitizeCoverMediaIds(
+    tenantId: string,
+    productId: string,
+    ids: string[],
+    currentCovers: string[],
+  ): Promise<string[]> {
+    const requested = (ids || []).map((id) => String(id || '').trim()).filter(Boolean);
+    if (!requested.length) return [];
+    if (!(this.dataSource && process.env.DB_ENABLED === 'true')) {
+      return [...new Set(requested)];
+    }
+    const uniqKeepOrder: string[] = [];
+    const seen = new Set<string>();
+    for (const id of requested) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      uniqKeepOrder.push(id);
+    }
+    const rows = await this.dataSource.getRepository(MediaAsset).find({
+      where: { tenantId, id: In(uniqKeepOrder), status: 'active' },
+    });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const current = new Set((currentCovers || []).filter(Boolean));
+    const out: string[] = [];
+    for (const id of uniqKeepOrder) {
+      const row = byId.get(id);
+      if (!row) continue;
+      if (row.productId && row.productId !== productId && !current.has(id)) continue;
+      if (this.isPromoAsset(row) && !current.has(id)) continue;
+      out.push(id);
+    }
+    return out;
+  }
+
+  /**
+   * 生图/生视频成功后：把成片 mediaId 追加到商品 coverMediaIds 末尾（不替换；同 id 跳过）。
+   * 允许宣传图/视频（业主显式追加）；须本租户且挂在该商品上。
+   */
+  async appendCoverMedia(user: AuthContext, productId: string, mediaIds: string[]) {
+    this.assertStaff(user);
+    const want = [...new Set((mediaIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+    if (!want.length) throw new BadRequestException('请提供 mediaIds');
+    const p = await this.repo.findById(user.tenantId, productId);
+    if (!p) throw new NotFoundException('商品不存在');
+    if (!(this.dataSource && process.env.DB_ENABLED === 'true')) {
+      throw new BadRequestException('需开启数据库');
+    }
+    const mediaRepo = this.dataSource.getRepository(MediaAsset);
+    const rows = await mediaRepo.find({
+      where: { tenantId: user.tenantId, id: In(want), status: 'active' },
+    });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const missing = want.filter((id) => !byId.has(id));
+    if (missing.length) {
+      throw new BadRequestException(`媒体不存在或不属于本租户：${missing.slice(0, 3).join(',')}`);
+    }
+    for (const id of want) {
+      const row = byId.get(id)!;
+      if (row.productId && row.productId !== productId) {
+        throw new BadRequestException(`媒体不属于该商品：${id}`);
+      }
+      if (!row.productId) {
+        throw new BadRequestException(`媒体未关联商品：${id}`);
+      }
+    }
+    const existing = [...(p.coverMediaIds || [])];
+    const have = new Set(existing);
+    const appended: string[] = [];
+    for (const id of want) {
+      if (have.has(id)) continue;
+      existing.push(id);
+      have.add(id);
+      appended.push(id);
+    }
+    const skipped = want.filter((id) => !appended.includes(id));
+    const updated =
+      appended.length > 0
+        ? await this.repo.update(user.tenantId, productId, { coverMediaIds: existing })
+        : p;
+    if (!updated) throw new NotFoundException('商品不存在');
+    const skus = await this.repo.listSkus(user.tenantId, productId);
+    const dto = await this.withImages(user.tenantId, updated, this.toStaffDto(updated, skus));
+    return {
+      ...dto,
+      coverMediaIds: updated.coverMediaIds || existing,
+      appended,
+      skipped,
+      appendedCount: appended.length,
+      skippedCount: skipped.length,
+    };
+  }
+
   private async firstCoverUrl(tenantId: string, p: ProductRec): Promise<string> {
     const map = await this.batchFirstCoverUrls(tenantId, [p]);
     return map.get(p.id) || '';
@@ -114,7 +209,8 @@ export class ProductsService {
       let url = '';
       for (const cid of p.coverMediaIds || []) {
         const row = coverMap.get(cid);
-        if (row && !this.isPromoAsset(row)) {
+        // coverMediaIds 为准：含业主追加的宣传图；列表封面跳过纯视频
+        if (row && String(row.type || 'image') !== 'video') {
           url = this.publicUrl(row.objectKey);
           break;
         }
@@ -132,40 +228,42 @@ export class ProductsService {
     return path.join(process.cwd(), 'storage');
   }
 
-  /** 解析商品图片为可直接展示的 URL（本地 /media 静态；无需 token） */
+  /** 解析商品图序：以 coverMediaIds 为准（含业主「追加到商品」的宣传图/视频） */
   async resolveImages(tenantId: string, p: ProductRec) {
     const coverIds = p.coverMediaIds || [];
     if (!(this.dataSource && process.env.DB_ENABLED === 'true')) {
-      return coverIds.map((id) => ({ id, url: '', isPromo: false }));
+      return coverIds.map((id) => ({ id, url: '', isPromo: false, type: 'image' as const }));
     }
     const repo = this.dataSource.getRepository(MediaAsset);
-    let rows = await repo.find({
+    const coverRows = coverIds.length
+      ? await repo.find({ where: { tenantId, id: In(coverIds), status: 'active' } })
+      : [];
+    const productRows = await repo.find({
       where: { tenantId, productId: p.id, status: 'active', type: 'image' },
     });
-    // 兼容仅有 coverMediaIds、尚未写 productId 的旧数据
-    if (!rows.length && coverIds.length) {
-      rows = await repo.find({
-        where: { tenantId, id: In(coverIds), status: 'active', type: 'image' },
-      });
-    }
-    const byId = new Map(rows.map((r) => [r.id, r]));
+    const byId = new Map<string, MediaAsset>();
+    for (const r of [...coverRows, ...productRows]) byId.set(r.id, r);
     const ordered: MediaAsset[] = [];
+    const seen = new Set<string>();
     for (const id of coverIds) {
       const r = byId.get(id);
-      if (r) {
+      if (r && !seen.has(r.id)) {
         ordered.push(r);
-        byId.delete(id);
+        seen.add(r.id);
       }
     }
-    for (const r of rows) {
-      if (byId.has(r.id)) ordered.push(r);
+    // 未进 cover 的商品图（非宣传）兼容补齐
+    for (const r of productRows) {
+      if (seen.has(r.id)) continue;
+      if (this.isPromoAsset(r)) continue;
+      ordered.push(r);
+      seen.add(r.id);
     }
-    // 站规：商品图与宣传图永不混用；宣传图仅走宣传流
-    const productOnly = ordered.filter((r) => !this.isPromoAsset(r));
-    return productOnly.map((r) => ({
+    return ordered.map((r) => ({
       id: r.id,
       url: this.publicUrl(r.objectKey),
-      isPromo: false,
+      isPromo: this.isPromoAsset(r),
+      type: (r.type || 'image') as string,
     }));
   }
 
@@ -499,9 +597,16 @@ export class ProductsService {
       await this.levels.getProductLevel(user.tenantId, input.levelId);
     }
     if (input.coverMediaIds) {
+      const existing = await this.repo.findById(user.tenantId, id);
+      if (!existing) throw new NotFoundException('商品不存在');
       input = {
         ...input,
-        coverMediaIds: await this.filterProductCoverIds(user.tenantId, input.coverMediaIds),
+        coverMediaIds: await this.sanitizeCoverMediaIds(
+          user.tenantId,
+          id,
+          input.coverMediaIds,
+          existing.coverMediaIds || [],
+        ),
       };
     }
     const updated = await this.repo.update(user.tenantId, id, input);
@@ -692,7 +797,7 @@ export class ProductsService {
     return this.withImages(user.tenantId, updated!, this.toStaffDto(updated!, skus));
   }
 
-  /** 编辑页：删除一张商品图（软删 media + 从 coverMediaIds 移除） */
+  /** 编辑页：删除一张商品图（从 coverMediaIds 移除；宣传成片只摘链不软删） */
   async removeImage(user: AuthContext, productId: string, mediaId: string) {
     this.assertStaff(user);
     const p = await this.repo.findById(user.tenantId, productId);
@@ -701,8 +806,11 @@ export class ProductsService {
       const repo = this.dataSource.getRepository(MediaAsset);
       const row = await repo.findOne({ where: { id: mediaId, tenantId: user.tenantId } });
       if (row && (row.productId === productId || (p.coverMediaIds || []).includes(mediaId))) {
-        row.status = 'deleted';
-        await repo.save(row);
+        // 宣传图/视频仍挂在 promo_sets，编辑页移除只摘 cover，不删资产
+        if (!this.isPromoAsset(row)) {
+          row.status = 'deleted';
+          await repo.save(row);
+        }
       }
     }
     const coverMediaIds = (p.coverMediaIds || []).filter((id) => id !== mediaId);

@@ -121,6 +121,20 @@ export class ProductsController {
     return this.productsService.removeImage(user, id, mediaId);
   }
 
+  /**
+   * 生图/生视频成功后：追加 mediaIds 到 coverMediaIds 末尾（不替换；同 id 跳过）。
+   * Body: { mediaIds: string[] }
+   */
+  @Post(':id/cover-media/append')
+  @Roles('owner', 'staff')
+  appendCoverMedia(
+    @AuthUser() user: AuthContext,
+    @Param('id') id: string,
+    @Body() body: { mediaIds?: string[] },
+  ) {
+    return this.productsService.appendCoverMedia(user, id, body?.mediaIds || []);
+  }
+
   /** 管理员：商品访问日志 */
   @Get(':id/views')
   @Roles('owner', 'staff')

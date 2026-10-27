@@ -132,6 +132,17 @@ function enrichJob(j) {
   const sourceImages = Array.isArray(j.sourceImages)
     ? j.sourceImages.filter((im) => im && im.url)
     : [];
+  const resultItems = Array.isArray(result.items) ? result.items : [];
+  const appendMediaIds = resultItems
+    .map((it) => (it && (it.mediaId || it.savedMediaId)) || '')
+    .map((id) => String(id || '').trim())
+    .filter(Boolean);
+  const canAppendToProduct = !!(
+    isGenType &&
+    productId &&
+    j.status === 'succeeded' &&
+    appendMediaIds.length
+  );
   const doneTotal =
     progress.done != null && progress.total != null
       ? `${progress.done}/${progress.total}`
@@ -165,6 +176,8 @@ function enrichJob(j) {
     isOrphan: !!(j.orphanPromoSet || String(j.id || '').indexOf('orphan_') === 0),
     canOpenGallery: !!(isGenType && productId && setId),
     canOpenProduct,
+    canAppendToProduct,
+    appendMediaIds,
     resultSummary,
     resultName,
     busy,
@@ -279,6 +292,51 @@ Page({
     wx.navigateTo({
       url: `/pages/product/promo-gallery/promo-gallery?id=${job.productId}&setId=${job.setId}`,
     });
+  },
+
+  async appendToProduct() {
+    const job = this.data.job || {};
+    if (!job.canAppendToProduct || !job.productId) return;
+    if (this.data.appendingCover) return;
+    const mediaIds = job.appendMediaIds || [];
+    if (!mediaIds.length) {
+      wx.showToast({ title: '暂无成片可追加', icon: 'none' });
+      return;
+    }
+    this.setData({ appendingCover: true });
+    wx.showLoading({ title: '追加中…', mask: true });
+    try {
+      const res = await request({
+        url: `/api/products/${job.productId}/cover-media/append`,
+        method: 'POST',
+        data: { mediaIds },
+      });
+      wx.hideLoading();
+      const n = (res && res.appendedCount != null) ? res.appendedCount : 0;
+      const skipped = (res && res.skippedCount != null) ? res.skippedCount : 0;
+      const title = n > 0
+        ? (skipped > 0 ? `已追加 ${n} 个（${skipped} 个已在商品中）` : `已追加 ${n} 个到商品`)
+        : (skipped > 0 ? '已在商品中，无需重复追加' : '无可追加媒体');
+      wx.showToast({ title, icon: 'none', duration: 2200 });
+      const open = await new Promise((resolve) => {
+        wx.showModal({
+          title: '追加成功',
+          content: '是否打开商品编辑查看图序？',
+          confirmText: '打开',
+          cancelText: '留在此页',
+          success: (r) => resolve(!!r.confirm),
+          fail: () => resolve(false),
+        });
+      });
+      if (open) {
+        wx.navigateTo({ url: `/pages/product/edit/edit?id=${job.productId}` });
+      }
+    } catch (err) {
+      wx.hideLoading();
+      wx.showToast({ title: (err && err.message) || '追加失败', icon: 'none' });
+    } finally {
+      this.setData({ appendingCover: false });
+    }
   },
 
   async retry() {

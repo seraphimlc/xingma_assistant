@@ -116,6 +116,7 @@ NestJS API (:3000，生产 Nginx → https://xingma.visitworld.me/api/*)
 | POST | `/products/batch-status` | 批量上下架 |
 | POST | `/products/:id/copy` | 复制为新款 |
 | POST/DELETE | `/products/:id/images`… | 加图 / 删图 |
+| POST | `/products/:id/cover-media/append` | 追加 mediaIds 到 coverMediaIds 末尾（生图/视频成片；去重） |
 | POST/PATCH/DELETE | `/products/:id/skus`… | SKU |
 
 ### 发品 publish

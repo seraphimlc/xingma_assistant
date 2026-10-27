@@ -103,6 +103,15 @@ function enrichSet(s, prev) {
     percent: (s.progress && s.progress.percent) || (total ? Math.round((done / total) * 100) : 0),
     expanded: prev ? !!prev.expanded : false,
     hasCaption: !!(s.caption && String(s.caption).trim()),
+    // 生图/视频成功：可把成片 mediaId 追加到商品 coverMediaIds
+    canAppendToProduct: !!(
+      !busy &&
+      (s.status === 'done' || s.status === 'partial' || s.status === 'succeeded') &&
+      items.some((i) => i && i.mediaId && i.url && !i.failed)
+    ),
+    appendMediaIds: items
+      .filter((i) => i && i.mediaId && i.url && !i.failed)
+      .map((i) => String(i.mediaId)),
   });
 }
 
@@ -499,6 +508,53 @@ Page({
       await this.load({ silent: true });
     } finally {
       this.setData({ actingId: '' });
+    }
+  },
+
+  /** 将本组成片追加到商品 coverMediaIds 末尾（不去素材库挑图） */
+  async appendToProduct() {
+    const productId = this.data.id;
+    const set = this.data.detailSet;
+    if (!productId || !set || !set.canAppendToProduct) return;
+    if (this.data.appendingCover) return;
+    const mediaIds = (set.appendMediaIds || []).filter(Boolean);
+    if (!mediaIds.length) {
+      wx.showToast({ title: '暂无成片可追加', icon: 'none' });
+      return;
+    }
+    this.setData({ appendingCover: true });
+    wx.showLoading({ title: '追加中…', mask: true });
+    try {
+      const res = await request({
+        url: `/api/products/${productId}/cover-media/append`,
+        method: 'POST',
+        data: { mediaIds },
+      });
+      wx.hideLoading();
+      const n = (res && res.appendedCount != null) ? res.appendedCount : (res && res.appended && res.appended.length) || 0;
+      const skipped = (res && res.skippedCount != null) ? res.skippedCount : 0;
+      const title = n > 0
+        ? (skipped > 0 ? `已追加 ${n} 个（${skipped} 个已在商品中）` : `已追加 ${n} 个到商品`)
+        : (skipped > 0 ? '已在商品中，无需重复追加' : '无可追加媒体');
+      wx.showToast({ title, icon: 'none', duration: 2200 });
+      const open = await new Promise((resolve) => {
+        wx.showModal({
+          title: '追加成功',
+          content: '是否打开商品编辑查看图序？',
+          confirmText: '打开',
+          cancelText: '留在此页',
+          success: (r) => resolve(!!r.confirm),
+          fail: () => resolve(false),
+        });
+      });
+      if (open) {
+        wx.navigateTo({ url: `/pages/product/edit/edit?id=${productId}` });
+      }
+    } catch (err) {
+      wx.hideLoading();
+      wx.showToast({ title: (err && err.message) || '追加失败', icon: 'none' });
+    } finally {
+      this.setData({ appendingCover: false });
     }
   },
 });
