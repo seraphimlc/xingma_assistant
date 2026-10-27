@@ -58,12 +58,22 @@ function mapPromoSetCard(s) {
   // 视频：优先首帧/封面；图：取前 2～4 张拼贴
   const urls = [];
   if (isVideo) {
+    const looksImg = (u) => /\.(jpe?g|png|webp|gif|bmp)(\?|#|$)/i.test(String(u || ''));
+    const looksVid = (u) => /\.(mp4|webm|mov)(\?|#|$)/i.test(String(u || ''));
+    // 封面优先真正的 poster；不要把 mp4 塞进 <image>；也不要用「假视频」jpg 冒充可播
     const cover =
       s.posterUrl ||
       s.coverUrl ||
-      (items.find((i) => i && (i.posterUrl || i.coverUrl || i.url)) || {});
-    const u = cover.posterUrl || cover.coverUrl || cover.url || '';
-    if (u) urls.push(u);
+      (items.find((i) => i && (i.posterUrl || i.coverUrl) && !looksVid(i.posterUrl || i.coverUrl)) || {});
+    let u = '';
+    if (typeof cover === 'string') u = cover;
+    else u = cover.posterUrl || cover.coverUrl || '';
+    if (u && !looksVid(u)) urls.push(u);
+    // 若只有 jpg 假成片，仍可作缩略图，但不暗示可播（列表靠 typeLabel）
+    if (!urls.length) {
+      const thumb = (items.find((i) => i && i.url && looksImg(i.url)) || {}).url || '';
+      if (thumb) urls.push(thumb);
+    }
   } else {
     items.forEach((i) => {
       if (i && i.url && urls.length < 4) urls.push(i.url);
