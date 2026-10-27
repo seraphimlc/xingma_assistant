@@ -16,12 +16,17 @@ import {
   ColorSuggestionSource,
   PublishSuggestion,
   TitleSuggestionSource,
+  isRecognizedPublishImageRole,
+  PUBLISH_IMAGE_ROLE_LABELS,
 } from '../../products/publish/publish.types';
 
 const logger = new Logger('PublishJob');
 
 const REASON_ZH: Record<string, string> = {
+  no_product_material: '不是商品资料图',
+  not_garment_material: '图片不是服装类资料',
   missing_style_no: '未识别到吊牌款号',
+  hangtag_unclear: '吊牌文字不清晰',
   weak_title: '无法确认商品名称',
   color_placeholder: '未识别到颜色',
   title_fallback: '标题不可靠',
@@ -33,13 +38,21 @@ function humanPublishFailureReason(opts: {
   subtitle?: string | null;
   ocrNote?: string | null;
   reviewReasons?: string[];
+  explicit?: string | null;
 }): string {
+  const explicit = String(opts.explicit || '').trim();
+  if (explicit) return explicit.length <= 60 ? explicit : explicit.slice(0, 60);
   const sub = String(opts.subtitle || '').trim();
   const note = String(opts.ocrNote || '').trim();
   const blob = `${sub} ${note}`;
-  if (/不是服装|非服装|不成衣|非成衣|不是衣服|非针织|非毛衫/.test(blob)) {
-    const hit = sub || note;
-    return hit.length <= 40 ? hit : '图片不是服装类';
+  if (/不是商品资料|非商品资料|无关图片|生活照|不是资料图/.test(blob)) {
+    return '不是商品资料图';
+  }
+  if (/不是服装|非服装|不成衣|非成衣|不是衣服|非针织|非毛衫|非服装类资料/.test(blob)) {
+    return '图片不是服装类资料';
+  }
+  if (/吊牌.*(不清|模糊|无法|看不清)|看不清.*吊牌|无吊牌/.test(blob)) {
+    return '吊牌文字不清晰';
   }
   if (sub && /(未清晰|无法|不是|不能|失败|无吊牌|看不清)/.test(sub)) {
     return sub.length <= 60 ? sub : sub.slice(0, 60);
@@ -49,6 +62,48 @@ function humanPublishFailureReason(opts: {
   if (mapped.length) return mapped.join('；');
   if (note) return note.length <= 60 ? note : note.slice(0, 60);
   return '未识别出商品';
+}
+
+async function failUnrecognized(
+  publish: PublishService,
+  user: AuthContext,
+  productId: string,
+  jobId: string,
+  opts: {
+    failureReason: string;
+    reviewReasons: string[];
+    cover?: { coverId?: string; via?: string; reason?: string };
+    titleSource?: TitleSuggestionSource;
+    colorSource?: ColorSuggestionSource;
+    colorSourceNote?: string;
+    subtitle?: string;
+  },
+) {
+  await publish.discardUnrecognizedProduct(user, productId);
+  logger.log(
+    `unrecognized jobId=${jobId} productId=${productId} discarded reason=${opts.failureReason}`,
+  );
+  return {
+    recognized: false,
+    outcome: '未识别出商品',
+    failureReason: opts.failureReason,
+    productId: null,
+    styleNo: null,
+    name: null,
+    subtitle: opts.subtitle || null,
+    titleSource: opts.titleSource || 'fallback',
+    colorSource: opts.colorSource || 'placeholder',
+    colorSourceNote: opts.colorSourceNote || '',
+    coverMediaId: opts.cover?.coverId || null,
+    coverVia: opts.cover?.via || null,
+    coverReason: opts.cover?.reason || null,
+    skuCount: 0,
+    styleNoProvisional: true,
+    needReview: true,
+    reviewReasons: opts.reviewReasons,
+    status: null,
+    highComplete: false,
+  };
 }
 
 
@@ -78,7 +133,33 @@ export function registerPublishProductHandler(
       `analyze jobId=${job.id} productId=${productId} ms=${analyzeMs} ` +
         `ocr=${suggestion.ocrUsed} styleNo=${suggestion.styleNo || '-'} ` +
         `colors=${(suggestion.colors || []).slice(0, 8).join('/') || '-'} ` +
+        `roles=${(suggestion.images || []).map((i) => i.role).join('/') || '-'} ` +
         `note=${String(suggestion.ocrNote || '').slice(0, 200)}`,
+    );
+
+    // 锁定规则：批次命中任意 1/8 类即可；全部 unknown → 识别失败（不造假商品）
+    const recognizedImages = (suggestion.images || []).filter((i) =>
+      isRecognizedPublishImageRole(i.role),
+    );
+    if (!recognizedImages.length) {
+      const reasons = ['no_product_material'];
+      const blob = `${suggestion.ocrNote || ''} ${(suggestion.images || [])
+        .map((i) => i.ocrText || '')
+        .join(' ')}`;
+      const failZh = /自拍|风景|餐饮|聊天|截图|宠物|非服装|不是衣服/.test(blob)
+        ? REASON_ZH.not_garment_material
+        : REASON_ZH.no_product_material;
+      return failUnrecognized(publish, user, productId, job.id, {
+        failureReason: failZh,
+        reviewReasons: reasons,
+        subtitle: suggestion.subtitle,
+        colorSource: suggestion.colorSource,
+        colorSourceNote: suggestion.colorSourceNote,
+      });
+    }
+    logger.log(
+      `taxonomy jobId=${job.id} hit=${recognizedImages.length}/${(suggestion.images || []).length} ` +
+        `types=${[...new Set(recognizedImages.map((i) => PUBLISH_IMAGE_ROLE_LABELS[i.role] || i.role))].join('、')}`,
     );
 
     await ctx.updateProgress({ percent: 35, step: 'cover', message: '多模态选封面' });
@@ -127,7 +208,7 @@ export function registerPublishProductHandler(
       if (coverAsset?.localPath) titlePaths.push(coverAsset.localPath);
       for (const a of batch.assets) {
         const im = suggestion.images?.find((i) => i.mediaId === a.mediaId);
-        if (im?.role === 'hangtag') continue;
+        if (im && (im.role === 'hangtag' || im.role === 'size_chart' || im.role === 'lab_report' || im.role === 'packaging')) continue;
         if (a.localPath && !titlePaths.includes(a.localPath)) titlePaths.push(a.localPath);
       }
       if (!titlePaths.length && batch.assets[0]?.localPath) {
@@ -166,7 +247,7 @@ export function registerPublishProductHandler(
     if (isPlaceholderColorList(colors) || colorSource === 'placeholder') {
       await ctx.updateProgress({ percent: 58, step: 'colors', message: 'Vision 估色' });
       const colorPaths: string[] = [];
-      const preferRoles = new Set(['multi_color', 'main']);
+      const preferRoles = new Set(['multi_color', 'main', 'on_model']);
       for (const a of batch.assets) {
         const im = suggestion.images?.find((i) => i.mediaId === a.mediaId);
         if (im && preferRoles.has(im.role)) colorPaths.push(a.localPath);
@@ -302,38 +383,27 @@ export function registerPublishProductHandler(
     suggestion.reviewReasons = reviewReasons;
     batch.suggestion = suggestion;
 
-    // 无正式款号 = 未识别出商品：丢弃入队占位，不把临时号写成商品
+    // 无正式吊牌款号 = 未识别出商品：丢弃入队占位；仅有非吊牌 8 类也不造 SKU
     if (!styleOk) {
-      await publish.discardUnrecognizedProduct(user, productId);
-      logger.log(
-        `unrecognized jobId=${job.id} productId=${productId} discarded reasons=${reviewReasons.join(',') || '-'}`,
-      );
+      const hasHangtagImg = (suggestion.images || []).some((i) => i.role === 'hangtag');
+      if (hasHangtagImg && !reviewReasons.includes('hangtag_unclear')) {
+        reviewReasons.push('hangtag_unclear');
+      }
       const failureReason = humanPublishFailureReason({
         subtitle,
         ocrNote: suggestion.ocrNote,
         reviewReasons,
+        explicit: hasHangtagImg ? REASON_ZH.hangtag_unclear : REASON_ZH.missing_style_no,
       });
-      return {
-        recognized: false,
-        outcome: '未识别出商品',
+      return failUnrecognized(publish, user, productId, job.id, {
         failureReason,
-        productId: null,
-        styleNo: null,
-        name: null,
-        subtitle: subtitle || null,
+        reviewReasons,
+        cover: { coverId: cover.coverId, via: cover.via, reason: cover.reason },
         titleSource,
         colorSource,
         colorSourceNote,
-        coverMediaId: cover.coverId,
-        coverVia: cover.via,
-        coverReason: cover.reason,
-        skuCount: 0,
-        styleNoProvisional: true,
-        needReview: true,
-        reviewReasons,
-        status: null,
-        highComplete: false,
-      };
+        subtitle,
+      });
     }
 
     // 商品仅在售/下架

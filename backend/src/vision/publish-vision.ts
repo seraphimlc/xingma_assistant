@@ -274,3 +274,165 @@ export async function ocrImageText(
     return { text: '', note: `多模态 OCR 失败: ${msg}`, via: 'none' };
   }
 }
+
+
+/** 选图发品锁定 8 类（与 publish.types ImageRole 对齐，不含 unknown） */
+export const PUBLISH_VISION_ROLE_CODES = [
+  'main',
+  'detail',
+  'hangtag',
+  'size_chart',
+  'lab_report',
+  'on_model',
+  'packaging',
+  'multi_color',
+] as const;
+
+export type PublishVisionRoleCode = (typeof PUBLISH_VISION_ROLE_CODES)[number];
+
+const ROLE_ALIASES: Record<string, PublishVisionRoleCode | 'unknown'> = {
+  main: 'main',
+  hang_flat: 'main',
+  hang: 'main',
+  flatlay: 'main',
+  flat_lay: 'main',
+  挂拍: 'main',
+  平铺: 'main',
+  detail: 'detail',
+  closeup: 'detail',
+  细节: 'detail',
+  hangtag: 'hangtag',
+  label: 'hangtag',
+  care_label: 'hangtag',
+  wash_label: 'hangtag',
+  吊牌: 'hangtag',
+  水洗标: 'hangtag',
+  size_chart: 'size_chart',
+  sizechart: 'size_chart',
+  尺码表: 'size_chart',
+  lab_report: 'lab_report',
+  labreport: 'lab_report',
+  compliance: 'lab_report',
+  test_report: 'lab_report',
+  检测报告: 'lab_report',
+  质检: 'lab_report',
+  on_model: 'on_model',
+  model: 'on_model',
+  scene: 'on_model',
+  lookbook: 'on_model',
+  上身: 'on_model',
+  模特: 'on_model',
+  packaging: 'packaging',
+  package: 'packaging',
+  bag: 'packaging',
+  包装: 'packaging',
+  袋装: 'packaging',
+  multi_color: 'multi_color',
+  color_card: 'multi_color',
+  swatch: 'multi_color',
+  色卡: 'multi_color',
+  多色: 'multi_color',
+  unknown: 'unknown',
+  other: 'unknown',
+  none: 'unknown',
+  unusable: 'unknown',
+};
+
+export function normalizePublishImageRole(
+  raw: string | null | undefined,
+): PublishVisionRoleCode | 'unknown' {
+  const s = String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+  if (!s) return 'unknown';
+  if ((PUBLISH_VISION_ROLE_CODES as readonly string[]).includes(s)) {
+    return s as PublishVisionRoleCode;
+  }
+  for (const [k, v] of Object.entries(ROLE_ALIASES)) {
+    if (s === k || s.includes(k)) return v;
+  }
+  return 'unknown';
+}
+
+export interface PublishRoleClassifyItem {
+  mediaId: string;
+  localPath: string;
+  filename?: string;
+}
+
+export interface PublishRoleClassifyResult {
+  mediaId: string;
+  role: PublishVisionRoleCode | 'unknown';
+  confidence: number;
+  reason: string;
+}
+
+/**
+ * 多模态把选图发品图片归入锁定 8 类；不在枚举内 → unknown。
+ * 失败时返回空数组（调用方保留启发式结果）。
+ */
+export async function classifyPublishImageRoles(
+  vision: VisionClient,
+  items: PublishRoleClassifyItem[],
+): Promise<PublishRoleClassifyResult[]> {
+  const pool = (items || []).filter((it) => it?.localPath && fs.existsSync(it.localPath)).slice(0, 12);
+  if (!pool.length) return [];
+  if (!vision.configured()) return [];
+  try {
+    const parts: VisionContentPart[] = [
+      {
+        type: 'text',
+        text: `你是羊毛衫档口「选图发品」识图助手。共 ${pool.length} 张图（index 0..${pool.length - 1}）。
+请把每张图归入下列【唯一】类型之一（英文 code）。命中任意一类即算商品资料图，不要求批次齐全。
+
+锁定类型（只能用这些 code）：
+1. main — 挂拍图（含平铺）：整件成衣挂拍/平铺/静物，无人或几乎不见模特脸
+2. detail — 细节图：面料、织纹、领口、袖口、工艺特写
+3. hangtag — 商品吊牌/标签（含水洗标、成分标）
+4. size_chart — 尺码表/尺寸表
+5. lab_report — 检测/合规/质检/检验报告
+6. on_model — 上身效果图：真人/模特穿着展示
+7. packaging — 包装/袋装/盒装展示
+8. multi_color — 色卡/多色对照（多件并排或色卡）
+若不是服装商品资料（自拍、风景、餐饮、截图聊天、无关物体等）→ unknown
+
+只回一行 JSON：
+{"items":[{"index":0,"role":"main","confidence":0.9,"reason":"整件挂拍"},{"index":1,"role":"unknown","confidence":0.8,"reason":"不是商品资料图"}]}`,
+      },
+    ];
+    for (let i = 0; i < pool.length; i++) {
+      parts.push({
+        type: 'text',
+        text: `index=${i} file=${pool[i].filename || path.basename(pool[i].localPath)} id=${pool[i].mediaId}`,
+      });
+      parts.push({
+        type: 'image_url',
+        image_url: { url: vision.fileToDataUrl(pool[i].localPath, 1024, 75) },
+      });
+    }
+    const content = await vision.chat(parts, { maxTokens: 800, temperature: 0 });
+    const parsed = parseJsonLoose(content);
+    const arr = Array.isArray(parsed.items) ? parsed.items : Array.isArray(parsed) ? parsed : [];
+    const out: PublishRoleClassifyResult[] = [];
+    for (const row of arr) {
+      const idx = Number(row?.index);
+      if (!Number.isInteger(idx) || idx < 0 || idx >= pool.length) continue;
+      const role = normalizePublishImageRole(row?.role);
+      let conf = Number(row?.confidence);
+      if (!Number.isFinite(conf)) conf = role === 'unknown' ? 0.7 : 0.75;
+      conf = Math.max(0, Math.min(1, conf));
+      out.push({
+        mediaId: pool[idx].mediaId,
+        role,
+        confidence: conf,
+        reason: String(row?.reason || '').slice(0, 80),
+      });
+    }
+    return out;
+  } catch (e: any) {
+    const msg = String(e?.message || e).slice(0, 120);
+    logger.warn(`classifyPublishImageRoles 失败: ${msg}`);
+    return [];
+  }
+}

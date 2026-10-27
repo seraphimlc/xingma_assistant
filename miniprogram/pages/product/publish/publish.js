@@ -1,13 +1,17 @@
 const { request } = require('../../../utils/request');
 const { startPublishUpload, getSnapshot, syncLeaveGuard, pendingUploadCount, leaveWarnMessage } = require('../../../utils/publish-upload-queue');
 
-const ROLE_ORDER = ['hangtag', 'main', 'detail', 'multi_color', 'unknown'];
+const ROLE_ORDER = ['hangtag', 'main', 'detail', 'multi_color', 'on_model', 'packaging', 'size_chart', 'lab_report', 'unknown'];
 const ROLE_LABEL = {
-  hangtag: '吊牌',
-  main: '主图',
+  hangtag: '吊牌/标签',
+  main: '挂拍/平铺',
   detail: '细节',
-  multi_color: '多色',
-  unknown: '未分',
+  multi_color: '色卡/多色',
+  on_model: '上身效果',
+  packaging: '包装/袋装',
+  size_chart: '尺码表',
+  lab_report: '检测报告',
+  unknown: '未识别',
 };
 
 function pickLevel(list) {

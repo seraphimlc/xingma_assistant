@@ -1,5 +1,48 @@
-/** 选图发品：图角色 */
-export type ImageRole = 'hangtag' | 'main' | 'detail' | 'multi_color' | 'unknown';
+/**
+ * 选图发品图类型（锁定 8 类；其余 = unknown / 未识别）。
+ * 成功判定：批次中命中任意一类即可，不要求齐全。
+ * StyleNo 仅来自 hangtag OCR，禁止临时 V 号冒充。
+ */
+export type ImageRole =
+  | 'main' // 1 挂拍图（含平铺）
+  | 'detail' // 2 细节图（面料/工艺特写）
+  | 'hangtag' // 3 商品吊牌/标签（含水洗标）
+  | 'size_chart' // 4 尺码表
+  | 'lab_report' // 5 检测/合规报告
+  | 'on_model' // 6 上身效果图（真人/模特）
+  | 'packaging' // 7 包装/袋装展示
+  | 'multi_color' // 8 色卡/多色对照
+  | 'unknown'; // 不在枚举内 → 识别失败候选
+
+/** 正式枚举（不含 unknown） */
+export const PUBLISH_IMAGE_ROLES: ReadonlyArray<Exclude<ImageRole, 'unknown'>> = [
+  'main',
+  'detail',
+  'hangtag',
+  'size_chart',
+  'lab_report',
+  'on_model',
+  'packaging',
+  'multi_color',
+] as const;
+
+export const PUBLISH_IMAGE_ROLE_LABELS: Record<ImageRole, string> = {
+  main: '挂拍图（含平铺）',
+  detail: '细节图（面料/工艺特写）',
+  hangtag: '商品吊牌/标签（含水洗标）',
+  size_chart: '尺码表',
+  lab_report: '检测/合规报告',
+  on_model: '上身效果图（真人/模特）',
+  packaging: '包装/袋装展示',
+  multi_color: '色卡/多色对照',
+  unknown: '未识别',
+};
+
+export function isRecognizedPublishImageRole(
+  role: string | null | undefined,
+): role is Exclude<ImageRole, 'unknown'> {
+  return (PUBLISH_IMAGE_ROLES as readonly string[]).includes(String(role || ''));
+}
 
 export interface PublishBatchAsset {
   mediaId: string;

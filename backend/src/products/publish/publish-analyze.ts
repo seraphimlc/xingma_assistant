@@ -15,6 +15,7 @@ import {
   PublishBatchAsset,
   PublishSuggestion,
   ColorSuggestionSource,
+  isRecognizedPublishImageRole,
 } from './publish.types';
 import {
   isSparseColorList,
@@ -26,7 +27,11 @@ import { Logger } from '@nestjs/common';
 import { VisionClient } from '../../vision/vision.client';
 
 const analyzeLogger = new Logger('PublishAnalyze');
-import { ocrImageText } from '../../vision/publish-vision';
+import {
+  ocrImageText,
+  classifyPublishImageRoles,
+  normalizePublishImageRole,
+} from '../../vision/publish-vision';
 
 const execFileAsync = promisify(execFile);
 
@@ -123,15 +128,21 @@ function isLabReportText(text: string): boolean {
 
 function guessRoleFromFilename(name: string): { role: ImageRole; confidence: number } {
   const n = (name || '').toLowerCase();
-  if (/吊牌|标签|hangtag|label|tag/.test(n)) return { role: 'hangtag', confidence: 0.85 };
-  if (/多色|合照|色卡|群组|挂拍|multicolor|swatch|hang/.test(n))
+  if (/吊牌|水洗标|标签|hangtag|care.?label|wash.?label/.test(n))
+    return { role: 'hangtag', confidence: 0.85 };
+  if (/尺码|尺寸表|size.?chart/.test(n)) return { role: 'size_chart', confidence: 0.85 };
+  if (/质检|检验报告|检测报告|合规|lab.?report|test.?report/.test(n))
+    return { role: 'lab_report', confidence: 0.85 };
+  if (/包装|袋装|盒装|包装袋|packag|polybag|袋装展示/.test(n))
+    return { role: 'packaging', confidence: 0.8 };
+  if (/色卡|多色|合照|群组|multicolor|swatch|color.?card/.test(n))
     return { role: 'multi_color', confidence: 0.8 };
-  if (/细节|领口|袖口|detail|close/.test(n)) return { role: 'detail', confidence: 0.75 };
-  if (/场景|模特|上身|街拍|lookbook|\bmodel\b/.test(n) && !/挂拍|平铺|主图/.test(n)) {
-    return { role: 'unknown', confidence: 0.55 }; // 模特/场景不进商品主图角色
+  if (/细节|领口|袖口|面料|工艺|detail|close.?up/.test(n))
+    return { role: 'detail', confidence: 0.75 };
+  if (/场景|模特|上身|街拍|lookbook|on.?model|\bmodel\b/.test(n) && !/挂拍|平铺|主图/.test(n)) {
+    return { role: 'on_model', confidence: 0.75 };
   }
   if (/主图|封面|main|cover|平铺|挂拍/.test(n)) return { role: 'main', confidence: 0.7 };
-  if (/尺码|尺寸表|size.?chart/.test(n)) return { role: 'unknown', confidence: 0.5 };
   return { role: 'unknown', confidence: 0.2 };
 }
 
@@ -168,8 +179,11 @@ function guessRoleFromOcr(
     }
     return null;
   }
-  if (isSizeChartText(text) || isLabReportText(text)) {
-    return { role: 'unknown', confidence: 0.7 }; // 尺码表/质检报告：不参与主图
+  if (isSizeChartText(text)) {
+    return { role: 'size_chart', confidence: 0.85 };
+  }
+  if (isLabReportText(text)) {
+    return { role: 'lab_report', confidence: 0.85 };
   }
   const t = text.replace(/\s+/g, '');
   const fieldHits = ['款号', '成分', '材质', '颜色', '尺码', '克重', '款式'].filter((k) =>
@@ -594,23 +608,21 @@ async function assignRoles(
     }
   }
 
-  let mainAssigned = suggestions.some((s) => s.role === 'main');
+  // 尺码表/质检：显式入库，勿再抬成主图
   for (const s of suggestions) {
     if (s.role !== 'unknown') continue;
-    if (isSizeChartText(s.ocrText || '') || isLabReportText(s.ocrText || '')) {
-      // 保留 unknown，避免误当主图
-      s.roleConfidence = Math.max(s.roleConfidence, 0.6);
+    if (isSizeChartText(s.ocrText || '')) {
+      s.role = 'size_chart';
+      s.roleConfidence = Math.max(s.roleConfidence, 0.7);
       continue;
     }
-    if (!mainAssigned) {
-      s.role = 'main';
-      s.roleConfidence = 0.45;
-      mainAssigned = true;
-    } else {
-      s.role = 'detail';
-      s.roleConfidence = 0.4;
+    if (isLabReportText(s.ocrText || '')) {
+      s.role = 'lab_report';
+      s.roleConfidence = Math.max(s.roleConfidence, 0.7);
+      continue;
     }
   }
+  // 剩余 unknown 保持未识别：禁止把生活照/无关图强行抬成 main/detail
   return suggestions;
 }
 
@@ -761,9 +773,56 @@ export async function buildPublishSuggestion(
     }
   }
 
-  let styleNo =
-    extractStyleNo(allText, assets.map((a) => a.filename)) || fields['款号'] || '';
+  // Vision 8 类 Taxonomy：有 VISION 时覆盖/补全启发式（任意一类命中即可）
+  if (opts?.vision?.configured()) {
+    try {
+      const classified = await classifyPublishImageRoles(
+        opts.vision,
+        assets.map((a) => ({
+          mediaId: a.mediaId,
+          localPath: a.localPath,
+          filename: a.filename,
+        })),
+      );
+      for (const c of classified) {
+        const img = images.find((i) => i.mediaId === c.mediaId);
+        if (!img) continue;
+        const role = normalizePublishImageRole(c.role) as ImageRole;
+        // 置信度更高或原为 unknown 时采纳；吊牌/文档类优先采纳 vision
+        const preferVision =
+          img.role === 'unknown' ||
+          c.confidence >= img.roleConfidence + 0.05 ||
+          (c.role !== 'unknown' &&
+            ['hangtag', 'size_chart', 'lab_report', 'on_model', 'packaging'].includes(c.role));
+        if (preferVision) {
+          img.role = role;
+          img.roleConfidence = Math.max(img.roleConfidence, c.confidence);
+        }
+      }
+      const hit = images.filter((i) => isRecognizedPublishImageRole(i.role)).length;
+      analyzeLogger.log(
+        `visionRoles hit=${hit}/${images.length} ` +
+          images.map((i) => `${i.role}:${i.roleConfidence.toFixed(2)}`).join(','),
+      );
+    } catch (e: any) {
+      analyzeLogger.warn(`visionRoles 跳过: ${String(e?.message || e).slice(0, 120)}`);
+    }
+  }
+
+  // StyleNo 只从真实吊牌/标签 OCR 抽取——禁止文件名/临时号冒充
+  const hangtagText = images
+    .filter((i) => i.role === 'hangtag')
+    .map((i) => i.ocrText || '')
+    .filter(Boolean)
+    .join('\n');
+  let styleNo = '';
+  if (hangtagText) {
+    const hangFields = parseBracketFields(hangtagText);
+    styleNo =
+      extractStyleNo(hangtagText, []) || hangFields['款号'] || fields['款号'] || '';
+  }
   styleNo = String(styleNo || '').trim().replace(/[A-Za-z]$/, '');
+  if (styleNo && /^V\d{12}/i.test(styleNo)) styleNo = '';
 
   let material = extractMaterial(allText, fields);
   let styleName = fields['款式'] || '';

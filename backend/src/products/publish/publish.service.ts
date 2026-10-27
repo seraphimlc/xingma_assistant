@@ -751,7 +751,7 @@ export class PublishService implements OnModuleInit {
 
     const coverMediaIds: string[] = [];
     // 默认展示序：挂拍/主图 → 细节 → 场景/模特 → 吊牌/文字类（封面由 vision 再置顶）
-    const roleOrder = ['main', 'multi_color', 'detail', 'unknown', 'hangtag'];
+    const roleOrder = ['main', 'multi_color', 'detail', 'on_model', 'packaging', 'unknown', 'size_chart', 'lab_report', 'hangtag'];
     const ordered = [...(input.images || [])].sort((a, b) => {
       const ia = roleOrder.indexOf(a.role);
       const ib = roleOrder.indexOf(b.role);
