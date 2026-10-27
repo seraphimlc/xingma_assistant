@@ -1148,15 +1148,17 @@ export class PromoService implements OnModuleInit {
     try {
       let r: { buffer?: Buffer; mime: string; via: string; videoId: string; videoUrl?: string; seconds?: number; size?: string };
       if (engine === 'lkb') {
-        // Demo/prod 稳妥路径：1 张自有 OSS 作 first_frame + FIRST_LAST_FRAME（历史 SUCCEEDED 样本）。
-        // FREE+多 reference_image 今日触发 fixed channel / ratio-resolution 拒参。可调 VIDEO_LKB_MAX_REF_IMAGES。
+        // 2026-10-27: FREE + reference_image 已 SUCCEEDED (LKB 46671)；FIRST_LAST_FRAME smoke 46672 反被 ratio 拒。
+        // 只传自有 OSS 公网 URL；默认 1 张降通道压力。可调 VIDEO_LKB_MAX_REF_IMAGES。
         const maxLkbRefs = Math.max(
           1,
-          Math.min(9, parseInt(process.env.VIDEO_LKB_MAX_REF_IMAGES || '1', 10) || 1),
+          Math.min(3, parseInt(process.env.VIDEO_LKB_MAX_REF_IMAGES || '1', 10) || 1),
         );
         const ranked = refs
           .map((r, i) => ({ r, i, url: this.publicUrl(r!.objectKey) }))
           .filter((x) => /^https?:\/\//i.test(x.url))
+          // 排除被错误拼成 xy-tradex/.../https://... 的双 URL；优先非外部 https objectKey
+          .filter((x) => !/xingma-stall\/https?:/i.test(x.url))
           .sort((a, b) => {
             const ae = /^https?:\/\//i.test(String(a.r!.objectKey)) ? 1 : 0;
             const be = /^https?:\/\//i.test(String(b.r!.objectKey)) ? 1 : 0;
@@ -1168,32 +1170,17 @@ export class PromoService implements OnModuleInit {
             `LKB refs capped ${refUrls.length}→${useUrls.length} (VIDEO_LKB_MAX_REF_IMAGES=${maxLkbRefs})`,
           );
         }
-        const attachments: LkbVideoAttachment[] = [];
-        if (useUrls.length) {
-          attachments.push({
-            type: 'image',
-            uri: useUrls[0],
-            mediaType: 'image/jpeg',
-            name: 'first_frame',
-            metadata: { role: 'first_frame' },
-          });
-          for (let i = 1; i < useUrls.length; i++) {
-            attachments.push({
-              type: 'image',
-              uri: useUrls[i],
-              mediaType: 'image/jpeg',
-              name: `ref_${i}`,
-              metadata: { role: 'reference_image' },
-            });
-          }
-        }
-        const taskType = attachments.some((a) => a.metadata.role === 'first_frame')
-          ? 'FIRST_LAST_FRAME'
-          : 'FREE';
+        const attachments: LkbVideoAttachment[] = useUrls.map((uri, i) => ({
+          type: 'image' as const,
+          uri,
+          mediaType: 'image/jpeg',
+          name: `product_ref_${i + 1}`,
+          metadata: { role: 'reference_image' as const },
+        }));
         r = await this.lkbVideo.generate({
           prompt: promptZh,
           duration: seconds,
-          taskType,
+          taskType: 'FREE',
           attachments,
           generateAudio: true,
           watermark: false,
