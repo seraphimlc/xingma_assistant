@@ -25,6 +25,7 @@ import { MediaService } from '../media/media.service';
 import { buildPromoCaption } from './promo.captions';
 import { buildJobDisplayTitle } from '../jobs/job-display-title';
 import { VideoGenClient } from './video-gen.client';
+import { unwrapAbsoluteMediaUrl } from '../common/utils/media-url';
 import { LkbVideoClient, clampDuration, LkbVideoAttachment } from './lkb-video.client';
 import { draftVideoBeatScript, resolveVideoPromptZh, syncScriptFromBeats, VideoBeat } from './video-script';
 import { ExternalOutfitClient } from './external-outfit.client';
@@ -155,9 +156,9 @@ export class PromoService implements OnModuleInit {
     return d;
   }
   private publicUrl(objectKey: string) {
-    const k = String(objectKey || '').trim();
+    const k = unwrapAbsoluteMediaUrl(objectKey);
     if (/^https?:\/\//i.test(k)) return k;
-    return this.oss.publicUrl(objectKey);
+    return this.oss.publicUrl(k);
   }
 
   /**
@@ -238,7 +239,7 @@ export class PromoService implements OnModuleInit {
    * 失败返回 null（调用方决定降级或报错）。
    */
   private async ensureLocal(objectKey: string): Promise<string | null> {
-    const key = String(objectKey || '').trim();
+    const key = unwrapAbsoluteMediaUrl(objectKey);
     if (!key) return null;
 
     if (path.isAbsolute(key)) {

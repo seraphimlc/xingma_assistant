@@ -1,3 +1,4 @@
+import { unwrapAbsoluteMediaUrl } from '../common/utils/media-url';
 /**
  * LKB Agent 异步视频生成（sinan-video-generator）。
  * POST /api/invocations/rsync → poll GET /api/invocations/rsync/{id}
@@ -134,7 +135,9 @@ export class LkbVideoClient {
     if (!prompt) throw new Error('视频脚本/prompt 为空');
     const duration = clampDuration(Number(req.duration ?? this.defaultSeconds) || this.defaultSeconds);
     const taskType: LkbVideoTaskType = req.taskType || 'FREE';
-    const attachments = (req.attachments || []).filter((a) => a && /^https?:\/\//i.test(String(a.uri || '')));
+    const attachments = (req.attachments || [])
+      .map((a) => (a ? { ...a, uri: unwrapAbsoluteMediaUrl(a.uri) } : a))
+      .filter((a) => a && /^https?:\/\//i.test(String(a.uri || '')));
     if (taskType === 'FIRST_LAST_FRAME') {
       const hasFirst = attachments.some((a) => a.metadata?.role === 'first_frame');
       if (!hasFirst) throw new Error('FIRST_LAST_FRAME 需要 first_frame 附件');
