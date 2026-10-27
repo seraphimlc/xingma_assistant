@@ -440,14 +440,13 @@ export function registerPublishProductHandler(
       });
     }
 
-    // 商品仅在售/下架
-    let finalStatus: 'on_sale' | 'off_sale' = 'off_sale';
+    // 识别成功建品后默认在售；标题弱 / needReview 仅打标，不再自动下架。
+    // 仅当调用方显式传 off_sale/draft 时下架。
+    let finalStatus: 'on_sale' | 'off_sale' = 'on_sale';
     if (statusIntent === 'off_sale' || statusIntent === 'draft') {
       finalStatus = 'off_sale';
-    } else if (highComplete) {
-      finalStatus = 'on_sale';
     } else {
-      finalStatus = 'off_sale';
+      finalStatus = 'on_sale';
     }
 
     const levelId = String(job.input.levelId || process.env.DEFAULT_PRODUCT_LEVEL_ID || 'pl_open');
