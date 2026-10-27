@@ -30,6 +30,7 @@
   </scroll-view>
 
   <view class="filters">
+    <text class="chip {{status===''?'active':''}}" data-status="all" bindtap="onStatusFilter">全部</text>
     <text class="chip {{status==='on_sale'?'active':''}}" data-status="on_sale" bindtap="onStatusFilter">在售</text>
     <text class="chip {{status==='off_sale'?'active':''}}" data-status="off_sale" bindtap="onStatusFilter">下架</text>
   </view>

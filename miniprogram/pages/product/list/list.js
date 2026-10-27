@@ -118,8 +118,11 @@ Page({
   onSearchInput(e) { this.setData({ q: e.detail.value }); },
   onSearch() { this.reload(); },
   onStatusFilter(e) {
-    const s = e.currentTarget.dataset.status;
-    if (s !== 'on_sale' && s !== 'off_sale') return;
+    const raw = e.currentTarget.dataset.status;
+    // 全部: empty string (API omits status). Keep default 在售.
+    const s = raw == null || raw === 'all' ? '' : String(raw);
+    if (s !== '' && s !== 'on_sale' && s !== 'off_sale') return;
+    if (s === this.data.status) return;
     this.setData({ status: s });
     this.reload();
   },
