@@ -9,7 +9,10 @@ const STATUS_LABEL = {
 };
 
 const REASON_ZH = {
+  no_product_material: '不是商品资料图',
+  not_garment_material: '图片不是服装类资料',
   missing_style_no: '未识别到吊牌款号',
+  hangtag_unclear: '吊牌文字不清晰',
   weak_title: '无法确认商品名称',
   color_placeholder: '未识别到颜色',
   title_fallback: '标题不可靠',
@@ -52,7 +55,7 @@ function enrichJob(j) {
     (j.payload && j.payload.setId) ||
     (j.result && j.result.setId) ||
     '';
-  const styleNo =
+  let styleNo =
     j.styleNo ||
     (j.payload && (j.payload.styleNo || j.payload.draftStyleNo)) ||
     (j.result && (j.result.styleNo || (j.result.product && j.result.product.styleNo))) ||
@@ -122,28 +125,38 @@ function enrichJob(j) {
     resultSummary = '识别失败';
   }
   const canOpenProduct = !!(isCreateType && recognized && productId);
+  // 识别失败：列表/详情/结果任何位置不得出现款号（含临时 V 号）
+  if (unrecognized || /^V\d{12}/i.test(String(styleNo || ''))) {
+    styleNo = '';
+  }
+  const sourceImages = Array.isArray(j.sourceImages)
+    ? j.sourceImages.filter((im) => im && im.url)
+    : [];
   const doneTotal =
     progress.done != null && progress.total != null
       ? `${progress.done}/${progress.total}`
       : '';
   return Object.assign({}, j, {
     title:
-      j.title ||
-      (j.payload && j.payload.displayTitle) ||
-      TYPE_LABEL[j.type] ||
-      '任务',
+      (unrecognized
+        ? '选图发品 · 未识别出商品'
+        : j.title ||
+          (j.payload && j.payload.displayTitle) ||
+          TYPE_LABEL[j.type] ||
+          '任务'),
     statusLabel,
     tone,
     failureReasonText,
     unrecognized: !!unrecognized,
     recognized: !!recognized,
     typeLabel: TYPE_LABEL[j.type] || j.type,
-    productId,
+    productId: unrecognized ? '' : productId,
     setId,
     styleNo,
+    sourceImages,
     isGenType,
     isCreateType,
-    canRetry: j.status === 'failed' || j.status === 'cancelled' || !!unrecognized,
+    canRetry: !unrecognized && (j.status === 'failed' || j.status === 'cancelled'),
     canCancel: busy,
     cancelLabel: j.status === 'running' ? '停止' : '取消',
     retryLabel: j.status === 'cancelled'
@@ -249,6 +262,13 @@ Page({
     });
   },
 
+  previewSource(e) {
+    const urls = (this.data.job && this.data.job.sourceImages || []).map((im) => im.url).filter(Boolean);
+    const cur = e.currentTarget.dataset.url || urls[0];
+    if (!urls.length) return;
+    wx.previewImage({ current: cur, urls });
+  },
+
   openGallery() {
     const job = this.data.job || {};
     // 必须带 setId，否则会进商品全部素材列表（兄弟任务）
@@ -264,6 +284,10 @@ Page({
   async retry() {
     const id = this.data.id;
     const job = this.data.job || {};
+    if (job.unrecognized || job.statusLabel === '识别失败') {
+      wx.showToast({ title: '识别失败不可重试', icon: 'none' });
+      return;
+    }
     try {
       const res = await request({ url: `/api/jobs/${id}/retry`, method: 'POST', data: {} });
       if (res && res.id && res.id !== id) {

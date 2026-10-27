@@ -77,6 +77,8 @@ async function failUnrecognized(
     colorSource?: ColorSuggestionSource;
     colorSourceNote?: string;
     subtitle?: string;
+    sourceMediaIds?: string[];
+    sourceImages?: Array<{ mediaId: string; url?: string; filename?: string; role?: string }>;
   },
 ) {
   await publish.discardUnrecognizedProduct(user, productId);
@@ -89,6 +91,7 @@ async function failUnrecognized(
     failureReason: opts.failureReason,
     productId: null,
     styleNo: null,
+    draftStyleNo: null,
     name: null,
     subtitle: opts.subtitle || null,
     titleSource: opts.titleSource || 'fallback',
@@ -103,6 +106,8 @@ async function failUnrecognized(
     reviewReasons: opts.reviewReasons,
     status: null,
     highComplete: false,
+    sourceMediaIds: opts.sourceMediaIds || [],
+    sourceImages: opts.sourceImages || [],
   };
 }
 
@@ -137,6 +142,18 @@ export function registerPublishProductHandler(
         `note=${String(suggestion.ocrNote || '').slice(0, 200)}`,
     );
 
+    const batch = publish.getBatch(user.tenantId, batchId);
+    const sourceMediaIds = batch.assets.map((a) => a.mediaId);
+    const sourceImages = batch.assets.map((a) => {
+      const im = suggestion.images?.find((i) => i.mediaId === a.mediaId);
+      return {
+        mediaId: a.mediaId,
+        url: a.url || '',
+        filename: a.filename || '',
+        role: im?.role || 'unknown',
+      };
+    });
+
     // 锁定规则：批次命中任意 1/8 类即可；全部 unknown → 识别失败（不造假商品）
     const recognizedImages = (suggestion.images || []).filter((i) =>
       isRecognizedPublishImageRole(i.role),
@@ -155,6 +172,8 @@ export function registerPublishProductHandler(
         subtitle: suggestion.subtitle,
         colorSource: suggestion.colorSource,
         colorSourceNote: suggestion.colorSourceNote,
+        sourceMediaIds,
+        sourceImages,
       });
     }
     logger.log(
@@ -164,7 +183,6 @@ export function registerPublishProductHandler(
 
     await ctx.updateProgress({ percent: 35, step: 'cover', message: '多模态选封面' });
 
-    const batch = publish.getBatch(user.tenantId, batchId);
     const cands = batch.assets.map((a) => {
       const img = suggestion?.images?.find((i) => i.mediaId === a.mediaId);
       return {
@@ -403,6 +421,11 @@ export function registerPublishProductHandler(
         colorSource,
         colorSourceNote,
         subtitle,
+        sourceMediaIds,
+        sourceImages: sourceImages.map((s) => {
+          const im = suggestion.images?.find((i) => i.mediaId === s.mediaId);
+          return { ...s, role: im?.role || s.role };
+        }),
       });
     }
 
@@ -459,6 +482,11 @@ export function registerPublishProductHandler(
       reviewReasons,
       status: finalStatus,
       highComplete,
+      sourceMediaIds,
+      sourceImages: sourceImages.map((s) => {
+        const im = images.find((i) => i.mediaId === s.mediaId);
+        return { ...s, role: im?.role || s.role };
+      }),
     };
   };
   jobs.registerHandler('publish_product', handle);

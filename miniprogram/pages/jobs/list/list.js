@@ -43,10 +43,10 @@ function enrich(j) {
   } else if (j.type === 'publish_product' && j.status === 'succeeded') {
     statusLabel = '已完成';
   }
-  // 失败一律可重试；取消后也可重跑（后端会重置 attempts）
+  // 宣传失败/取消可重试；发品「识别失败」禁止重试
   const isPromo = j.type === 'promo_image' || j.type === 'promo_video';
   const isOrphan = !!(j.orphanPromoSet || String(j.id || '').indexOf('orphan_') === 0);
-  const canRetry = j.status === 'failed' || j.status === 'cancelled';
+  const canRetry = !pubFail && (j.status === 'failed' || j.status === 'cancelled');
   const canCancel = j.status === 'queued' || j.status === 'running';
   const cancelLabel = j.status === 'running' ? '停止' : '取消';
   const retryLabel = j.status === 'cancelled' ? '重跑' : (isPromo ? '重新生成' : '重试');
@@ -60,11 +60,12 @@ function enrich(j) {
     (j.payload && j.payload.setId) ||
     (j.result && j.result.setId) ||
     '';
-  const styleNo =
+  let styleNo =
     j.styleNo ||
     (j.payload && (j.payload.styleNo || j.payload.draftStyleNo)) ||
     (j.result && (j.result.styleNo || (j.result.product && j.result.product.styleNo))) ||
     '';
+  if (pubFail || /^V\d{12}/i.test(String(styleNo || ''))) styleNo = '';
   const rawMsg = progress.message || '';
   const looksLikeId = /^(job_|pj_|ps_)[a-z0-9]+$/i.test(String(rawMsg).trim())
     || /^[a-f0-9]{6,}$/i.test(String(rawMsg).trim());
@@ -73,7 +74,7 @@ function enrich(j) {
     (j.payload && j.payload.displayTitle) ||
     (rawMsg && !looksLikeId && rawMsg !== '排队中' && rawMsg !== '执行中' ? rawMsg : '') ||
     (j.type === 'promo_image' ? '宣传生图' : j.type === 'promo_video' ? '宣传视频' : j.type === 'publish_product' ? '图片发品' : '任务');
-  const productThumb = j.productThumb || '';
+  const productThumb = j.productThumb || (j.sourceImages && j.sourceImages[0] && j.sourceImages[0].url) || '';
   const doneTotal =
     progress.done != null && progress.total != null
       ? `${progress.done}/${progress.total}`

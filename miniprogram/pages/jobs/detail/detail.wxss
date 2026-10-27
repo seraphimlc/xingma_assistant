@@ -87,3 +87,16 @@
   line-height: 1.5;
   word-break: break-all;
 }
+
+.src-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-top: 12rpx;
+}
+.src-img {
+  width: 200rpx;
+  height: 200rpx;
+  border-radius: 12rpx;
+  background: #f3f3f3;
+}

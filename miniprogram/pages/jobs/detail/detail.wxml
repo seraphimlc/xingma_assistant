@@ -21,6 +21,22 @@
     </view>
 
 
+    <view class="card" wx:if="{{job.sourceImages && job.sourceImages.length}}">
+      <view class="section-title">上传图片（{{job.sourceImages.length}}）</view>
+      <view class="src-grid">
+        <image
+          wx:for="{{job.sourceImages}}"
+          wx:key="mediaId"
+          class="src-img"
+          src="{{item.url}}"
+          mode="aspectFill"
+          data-url="{{item.url}}"
+          bindtap="previewSource"
+          lazy-load
+        />
+      </view>
+    </view>
+
     <view class="card" wx:if="{{job.resultSummary || job.failureReasonText}}">
       <view class="section-title">结果</view>
       <view class="result-body" wx:if="{{job.unrecognized || job.statusLabel === '识别失败'}}">识别失败</view>

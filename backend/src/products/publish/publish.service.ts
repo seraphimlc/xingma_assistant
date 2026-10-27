@@ -335,6 +335,7 @@ export class PublishService implements OnModuleInit {
       name: body?.name,
     });
 
+    const mediaIds = batch.assets.map((a) => a.mediaId);
     const pubPayload = {
       batchId,
       productId: draft.id,
@@ -346,6 +347,9 @@ export class PublishService implements OnModuleInit {
       styleNo: body?.styleNo,
       draftStyleNo: draft.styleNo,
       name: body?.name,
+      // 上传顺序；列表缩略图取首张，详情展示全部（识别失败后商品已丢弃仍可还原）
+      mediaIds,
+      sourceImageCount: mediaIds.length,
     };
     const job = await this.jobs.create(user, 'publish_product', {
       ...pubPayload,
