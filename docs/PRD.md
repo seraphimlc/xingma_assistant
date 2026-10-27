@@ -20,8 +20,8 @@
 | 项 | 内容 |
 |----|------|
 | **目标** | 选图后尽快进入可编辑草稿，识图/选封面在后台跑 |
-| **现状** | `POST /api/products/publish/async` → 立即返回 `jobId` + `productId`，跳转编辑页；handler `publish_product` 后台补全 |
-| **验收** | 数秒内出现草稿；任务中心可见友好标题；失败可重试 |
+| **现状** | `POST /api/products/publish/async` → 立即返回 `jobId` + `productId`，跳转编辑页；handler `publish_product` 后台补全；**识别成功后默认 `on_sale`**，标题弱 / `needReview` 只打标不自动下架（显式 `off_sale`/`draft` 除外；款号冲突仍强制下架） |
+| **验收** | 数秒内出现草稿；识别成功后商品在售；弱标题仍在售且带 needReview；任务中心可见友好标题；失败可重试 |
 
 ---
 

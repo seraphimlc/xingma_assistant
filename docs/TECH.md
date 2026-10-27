@@ -187,6 +187,8 @@ NestJS API (:3000，生产 Nginx → https://xingma.visitworld.me/api/*)
 
 batch：内存 Map，TTL≈2h；主路径可不停留在确认页。
 
+识别成功落库：`status` 默认 `on_sale`（不因弱标题 / `needReview` 自动下架）；仅 `statusIntent=off_sale|draft` 或款号冲突时下架。`needReview` 仍写入 tags。
+
 ### 4.2 宣传素材组（图 + 视频）
 
 ```
