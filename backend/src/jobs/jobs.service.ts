@@ -25,6 +25,7 @@ import { Product } from '../common/entities/product.entity';
 import { MediaAsset } from '../common/entities/media-asset.entity';
 import { PromoSetEntity } from '../common/entities/promo-set.entity';
 import { OssClient } from '../media/oss.client';
+import { findTemplate, isVideoTemplate } from '../promo/promo.templates';
 
 @Injectable()
 export class JobsService {
@@ -36,6 +37,16 @@ export class JobsService {
     @Optional() private readonly dataSource?: DataSource,
     @Optional() private readonly oss?: OssClient,
   ) {}
+
+  /** params.kind 缺失时仍按 templateId 识别视频，避免 orphan 重试成 promo_image */
+  private isPromoVideoSet(
+    templateId: string | null | undefined,
+    params: Record<string, unknown> | null | undefined,
+  ): boolean {
+    const kind = String((params as any)?.kind || (params as any)?.mediaKind || '');
+    if (kind === 'video' || kind === 'promo_video') return true;
+    return isVideoTemplate(findTemplate(String(templateId || (params as any)?.templateId || '')));
+  }
 
   private jobs(): Repository<JobEntity> {
     if (!(this.dataSource && process.env.DB_ENABLED === 'true')) {
@@ -319,8 +330,8 @@ export class JobsService {
       }
     }
     const params = (row.params || {}) as any;
-    const kind = String(params.kind || params.mediaKind || '');
-    const isVideo = kind === 'video' || kind === 'promo_video';
+    const isVideo = this.isPromoVideoSet(row.templateId, params);
+    const kind = isVideo ? 'video' : String(params.kind || params.mediaKind || 'image');
     const type = isVideo ? 'promo_video' : 'promo_image';
     const productId = String(row.productId || '').trim();
     const err =
@@ -494,8 +505,8 @@ export class JobsService {
           }
         }
         const params = (row.params || {}) as any;
-        const kind = String(params.kind || params.mediaKind || '');
-        const isVideo = kind === 'video' || kind === 'promo_video';
+        const isVideo = this.isPromoVideoSet(row.templateId, params);
+        const kind = isVideo ? 'video' : String(params.kind || params.mediaKind || 'image');
         const err =
           (Array.isArray(row.images) &&
             row.images.map((i: any) => i?.error).find((e: any) => e)) ||
@@ -592,7 +603,16 @@ export class JobsService {
     row.nextRunAt = null;
     row.startedAt = null;
     row.attempts = 0;
-    row.progress = { percent: 0, step: 'queued', message: '重新排队' };
+    {
+      const prevP = (row.progress || {}) as Record<string, unknown>;
+      row.progress = {
+        percent: 0,
+        step: 'queued',
+        message: '重新排队',
+        ...(typeof prevP.done === 'number' ? { done: prevP.done } : {}),
+        ...(typeof prevP.total === 'number' ? { total: prevP.total } : {}),
+      };
+    }
     await repo.save(row);
     await this.appendEvent(row, 'retry', '用户触发重试（已重置次数）');
     await this.revivePromoSetForRequeuedJob(row);
@@ -633,7 +653,16 @@ export class JobsService {
             existing.nextRunAt = null;
             existing.startedAt = null;
             existing.attempts = 0;
-            existing.progress = { percent: 0, step: 'queued', message: '重新排队' };
+            {
+              const prevP = (existing.progress || {}) as Record<string, unknown>;
+              existing.progress = {
+                percent: 0,
+                step: 'queued',
+                message: '重新排队',
+                ...(typeof prevP.done === 'number' ? { done: prevP.done } : {}),
+                ...(typeof prevP.total === 'number' ? { total: prevP.total } : {}),
+              };
+            }
             await this.jobs().save(existing);
             await this.appendEvent(existing, 'retry', '用户触发重试（孤儿组已挂回 job）');
             await this.revivePromoSetForRequeuedJob(existing);
@@ -647,11 +676,11 @@ export class JobsService {
     }
 
     const params = (setRow.params || {}) as Record<string, unknown>;
-    const kind = String((params as any).kind || (params as any).mediaKind || '');
-    const isVideo = kind === 'video' || kind === 'promo_video';
-    const type: JobType = isVideo ? 'promo_video' : 'promo_image';
     const productId = String(setRow.productId || '').trim();
     const templateId = String(setRow.templateId || (params as any).templateId || '').trim();
+    const isVideo = this.isPromoVideoSet(templateId, params);
+    const kind = isVideo ? 'video' : String((params as any).kind || (params as any).mediaKind || 'image');
+    const type: JobType = isVideo ? 'promo_video' : 'promo_image';
     const refIds = ((params as any).referenceAssetIds || []).filter(Boolean);
     if (!productId || !templateId || !refIds.length) {
       throw new BadRequestException('该组缺少生成参数，无法重新生成');
@@ -765,11 +794,16 @@ export class JobsService {
       row.nextRunAt = null;
       row.finishedAt = null;
       row.error = null;
-      row.progress = {
-        percent: 0,
-        step: 'queued',
-        message: msg,
-      };
+      {
+        const prevP = (row.progress || {}) as Record<string, unknown>;
+        row.progress = {
+          percent: 0,
+          step: 'queued',
+          message: msg,
+          ...(typeof prevP.done === 'number' ? { done: prevP.done } : {}),
+          ...(typeof prevP.total === 'number' ? { total: prevP.total } : {}),
+        };
+      }
       await repo.save(row);
       await this.appendEvent(
         row,
@@ -841,11 +875,9 @@ export class JobsService {
         const prev = row.status;
         row.status = 'generating';
         row.jobId = job.id;
-        const kind = String(
-          (row.params as any)?.kind || (row.params as any)?.mediaKind || '',
-        );
         const isVideo =
-          job.type === 'promo_video' || kind === 'video' || kind === 'promo_video';
+          job.type === 'promo_video' ||
+          this.isPromoVideoSet(row.templateId, (row.params || {}) as any);
         if (isVideo) {
           row.images = [{ index: 0, status: 'pending' }] as any;
         } else if (Array.isArray(row.images) && row.images.length) {
@@ -1047,6 +1079,79 @@ export class JobsService {
     };
   }
 
+
+  /**
+   * 列表/详情展示用：终态任务若 progress.done 仍停在排队初值（旧 markSucceeded
+   * 把 ...(job.progress) 放在 step/message 之后覆盖），用 result.done/total 校准，
+   * 避免任务中心显示「完成 0/4」。c9ebb1a 修了写入，本方法补读路径与历史脏数据。
+   */
+  private progressForDto(
+    status: string,
+    progress: Record<string, unknown> | null | undefined,
+    result: Record<string, unknown> | null | undefined,
+  ): Record<string, unknown> {
+    const prev = { ...(progress || {}) } as Record<string, unknown>;
+    const rDone = (result as any)?.done;
+    const rTotal = (result as any)?.total;
+    const pDone = prev.done;
+    const pTotal = prev.total;
+    const done =
+      typeof rDone === 'number'
+        ? rDone
+        : typeof pDone === 'number'
+          ? pDone
+          : undefined;
+    const total =
+      typeof rTotal === 'number'
+        ? rTotal
+        : typeof pTotal === 'number'
+          ? pTotal
+          : undefined;
+    const terminal =
+      status === 'succeeded' || status === 'failed' || status === 'cancelled';
+    const doneStale =
+      typeof rDone === 'number' &&
+      typeof pDone === 'number' &&
+      pDone !== rDone;
+    const staleMid =
+      terminal &&
+      typeof prev.step === 'string' &&
+      prev.step !== 'done' &&
+      prev.step !== 'failed' &&
+      prev.step !== 'cancelled';
+    if (!terminal && !doneStale) {
+      return {
+        ...prev,
+        ...(done != null ? { done } : {}),
+        ...(total != null ? { total } : {}),
+      };
+    }
+    const step =
+      status === 'succeeded'
+        ? 'done'
+        : status === 'failed'
+          ? 'failed'
+          : status === 'cancelled'
+            ? 'cancelled'
+            : (prev.step as string) || undefined;
+    let message: string | undefined =
+      typeof prev.message === 'string' ? prev.message : undefined;
+    if (status === 'succeeded') {
+      message =
+        done != null && total != null ? `完成 ${done}/${total}` : '完成';
+    } else if (staleMid || doneStale) {
+      // keep prev message for failed/cancelled unless we only needed done fix
+    }
+    return {
+      ...prev,
+      ...(status === 'succeeded' ? { percent: 100 } : {}),
+      ...(step ? { step } : {}),
+      ...(message != null ? { message } : {}),
+      ...(done != null ? { done } : {}),
+      ...(total != null ? { total } : {}),
+    };
+  }
+
   toDto(row: JobEntity) {
     const rec = this.toRecord(row);
     const payload = summarizePayload(rec.type, rec.input);
@@ -1072,7 +1177,7 @@ export class JobsService {
       id: rec.id,
       type: rec.type,
       status: rec.status,
-      progress: rec.progress,
+      progress: this.progressForDto(rec.status, rec.progress as any, rec.result as any),
       payload,
       result: rec.result,
       error: rec.error,
