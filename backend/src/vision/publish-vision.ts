@@ -248,13 +248,14 @@ export async function ocrImageText(
       {
         type: 'text',
         text: `请完整识别这张图片中的所有可见文字（中文、数字、英文），按阅读顺序输出纯文本。
-特别关注吊牌/笔记字段：款号、成分、材质、颜色、尺码、克重、款式。
+特别关注吊牌/笔记字段：款号、成分、材质、颜色、尺码、克重、款式、编号。
+吊牌即使有手持、透视或轻微反光，只要笔画可辨就必须读出「款号」及数字；不要因角度或背景针织纹理判为看不清。
 多色挂拍或竖排色标请尽量读出各色名。
-不要解释、不要 JSON、不要 markdown；若几乎无字只输出空。`,
+不要解释、不要 JSON、不要 markdown；仅当文字完全无法辨认时才输出空。`,
       },
       {
         type: 'image_url',
-        image_url: { url: vision.fileToDataUrl(localPath, 1024, 75) },
+        image_url: { url: vision.fileToDataUrl(localPath, 1400, 88) },
       },
     ];
     const content = await vision.chat(parts, { maxTokens: 900, temperature: 0 });

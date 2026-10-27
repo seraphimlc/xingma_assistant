@@ -404,14 +404,25 @@ export function registerPublishProductHandler(
     // 无正式吊牌款号 = 未识别出商品：丢弃入队占位；仅有非吊牌 8 类也不造 SKU
     if (!styleOk) {
       const hasHangtagImg = (suggestion.images || []).some((i) => i.role === 'hangtag');
-      if (hasHangtagImg && !reviewReasons.includes('hangtag_unclear')) {
+      const hangtagOcr = (suggestion.images || [])
+        .filter((i) => i.role === 'hangtag')
+        .map((i) => String(i.ocrText || '').trim())
+        .join('\n');
+      const noteBlob = `${suggestion.ocrNote || ''} ${hangtagOcr} ${subtitle || ''}`;
+      // 仅当 OCR/备注明确指向模糊/看不清时才报「吊牌文字不清晰」；
+      // 吊牌清晰但超时/空响应导致无款号 → 用「未识别到吊牌款号」，避免误伤
+      const unclearHangtag =
+        hasHangtagImg &&
+        (/吊牌.*(不清|模糊|无法辨认|看不清)|看不清.*吊牌|文字模糊|字迹不清/.test(noteBlob) ||
+          (/多模态 OCR 无有效文字|几乎无字/.test(noteBlob) && hangtagOcr.length > 0 && hangtagOcr.length < 8));
+      if (unclearHangtag && !reviewReasons.includes('hangtag_unclear')) {
         reviewReasons.push('hangtag_unclear');
       }
       const failureReason = humanPublishFailureReason({
         subtitle,
         ocrNote: suggestion.ocrNote,
         reviewReasons,
-        explicit: hasHangtagImg ? REASON_ZH.hangtag_unclear : REASON_ZH.missing_style_no,
+        explicit: unclearHangtag ? REASON_ZH.hangtag_unclear : REASON_ZH.missing_style_no,
       });
       return failUnrecognized(publish, user, productId, job.id, {
         failureReason,
