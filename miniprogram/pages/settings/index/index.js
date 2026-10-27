@@ -1,6 +1,10 @@
 const { request } = require('../../../utils/request');
 const { saveProfileWithAvatarUpload, isTempAvatarPath, stableMediaUrl } = require('../../../utils/profile');
 
+/** 员工邀请分享卡封面：公网 https（OSS xingma-stall/static），勿用本地/空路径 */
+const INVITE_SHARE_COVER_URL =
+  'https://xy-tradex.oss-cn-shenzhen.aliyuncs.com/xingma-stall/static/invite-share-cover.jpg';
+
 function inviteStatusLabel(status) {
   const map = {
     active: '有效',
@@ -33,6 +37,9 @@ Page({
     if (q && q.profile === '1') this.setData({ showProfile: true });
   },
   onShow() {
+    try {
+      wx.showShareMenu({ withShareTicket: true, menus: ['shareAppMessage'] });
+    } catch (e) { /* ignore */ }
     this.load();
   },
   async load() {
@@ -327,19 +334,29 @@ Page({
       wx.hideLoading();
       this.setData({ latestInvite: inv });
       await this.load();
-      wx.showToast({ title: '已生成，列表点邀请复制', icon: 'none' });
+      wx.showToast({ title: '已生成，列表点邀请分享', icon: 'none' });
     } catch (e) {
       wx.hideLoading();
       wx.showToast({ title: (e && e.message) || '失败', icon: 'none' });
     }
   },
-  copyInviteCode(e) {
-    const code = (e.currentTarget.dataset && e.currentTarget.dataset.code) || (this.data.latestInvite && this.data.latestInvite.code);
-    if (!code) return;
-    wx.setClipboardData({
-      data: String(code),
-      success: () => wx.showToast({ title: '已复制邀请码，发给同事', icon: 'none' }),
-    });
+  /** 列表「邀请」：微信分享卡片；path 静默带 code，标题/UI 不展示邀请码 */
+  onShareAppMessage(res) {
+    let code = (this.data.latestInvite && this.data.latestInvite.code) || '';
+    if (res && res.from === 'button' && res.target && res.target.dataset) {
+      code = res.target.dataset.code || code;
+    }
+    code = String(code || '').trim().toUpperCase();
+    const path = code
+      ? `/pages/invite/accept/accept?code=${encodeURIComponent(code)}`
+      : '/pages/invite/accept/accept';
+    // 必须用公网 https；空/本地/坏链会导致分享卡中间大块黑
+    const imageUrl = INVITE_SHARE_COVER_URL;
+    return {
+      title: '邀请你加入档口',
+      path,
+      imageUrl,
+    };
   },
   async revokeInvite(e) {
     const id = e.currentTarget.dataset.id;

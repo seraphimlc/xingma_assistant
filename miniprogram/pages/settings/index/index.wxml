@@ -56,7 +56,6 @@
           <text class="tag">员工</text>
         </view>
         <view class="muted small">{{item.whoLine}}</view>
-        <view class="muted small" wx:if="{{item.inviteCode}}">来自邀请 {{item.inviteCode}}</view>
       </view>
       <view class="ops" wx:if="{{item.id !== myMemberId}}">
         <text class="link danger" data-id="{{item.id}}" data-name="{{item.displayName}}" bindtap="kickMember">踢除</text>
@@ -67,19 +66,23 @@
 
   <view class="card" wx:if="{{canInvite}}">
     <view class="section">员工邀请</view>
-    <view class="muted small" style="margin-top:8rpx;">生成后在列表点「邀请」复制邀请码；同事打开小程序邀请页粘贴即可加入。</view>
+    <view class="muted small" style="margin-top:8rpx;">生成后在列表点「邀请」，用微信分享卡片发给同事加入（页上不展示码）。</view>
     <view class="form" style="margin-top:16rpx;">
       <view class="btn-primary mini" bindtap="createInvite">生成邀请</view>
     </view>
 
     <view class="row item invite-record" wx:for="{{invites}}" wx:key="id" style="margin-top:16rpx;">
       <view class="invite-meta">
-        <text class="invite-code-text">{{item.code}}</text>
+        <text class="invite-code-text">邀请 {{index + 1}}</text>
         <text class="muted" wx:if="{{item.status!=='active'}}"> · {{item.statusLabel}}</text>
         <text class="muted" wx:elif="{{item.maxUses}}"> · 已用{{item.useCount || 0}}/{{item.maxUses}}</text>
       </view>
       <view class="ops" wx:if="{{item.status==='active'}}">
-        <text class="link" data-code="{{item.code}}" bindtap="copyInviteCode">邀请</text>
+        <button
+          class="link invite-share-link"
+          open-type="share"
+          data-code="{{item.code}}"
+        >邀请</button>
         <text class="link danger" data-id="{{item.id}}" bindtap="revokeInvite">撤销</text>
       </view>
     </view>

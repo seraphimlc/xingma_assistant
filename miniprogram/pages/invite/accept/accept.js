@@ -1,5 +1,5 @@
 /**
- * 员工/业主邀请落地：小程序码 scene=c=CODE 或 query invite/code
+ * 员工/业主邀请落地：分享 path query 静默带 code（或 scene）
  * 微信登录 → 带 inviteCode 换 JWT → 绑定成员 → 强制补齐头像+昵称（缺一不可；手机选填）→ 进工作台
  */
 const { request } = require('../../../utils/request');
@@ -46,7 +46,7 @@ Page({
   async run(code) {
     code = inviteUtil.normalizeCode(code);
     if (!code) {
-      this.setData({ loading: false, error: '缺少邀请码，请打开业主发来的邀请卡片，或手动输入邀请码' });
+      this.setData({ loading: false, error: '请打开业主发来的微信邀请卡片加入' });
       return;
     }
     inviteUtil.savePendingInviteCode(code);
@@ -90,7 +90,7 @@ Page({
       }
       wx.hideLoading();
       if (session.role !== 'owner' && session.role !== 'staff') {
-        this.setData({ loading: false, error: '绑定失败，仍为客户角色。请确认邀请码有效，或让业主重新转发邀请卡片' });
+        this.setData({ loading: false, error: '绑定失败，仍为客户角色。请让业主重新发微信邀请卡片' });
         return;
       }
       inviteUtil.clearPendingInviteCode();
@@ -195,11 +195,8 @@ Page({
       wx.showToast({ title: (e && e.message) || '保存失败', icon: 'none' });
     }
   },
-  onCodeInput(e) {
-    this.setData({ code: inviteUtil.normalizeCode((e.detail && e.detail.value) || '') });
-  },
   retry() {
-    const code = inviteUtil.normalizeCode(this.data.code || '');
+    const code = inviteUtil.normalizeCode(this.data.code || inviteUtil.readPendingInviteCode());
     this.setData({ loading: true, error: '', code, needProfile: false });
     this.run(code);
   },

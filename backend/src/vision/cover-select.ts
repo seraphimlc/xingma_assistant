@@ -58,8 +58,9 @@ export function heuristicPickCover(cands: CoverCandidate[]): CoverSelectResult {
     if (role === 'main') score += 40;
     else if (role === 'multi_color') score += 25;
     else if (role === 'detail') score -= 25;
-    else if (role === 'hangtag') score -= 60;
-    else if (role === 'scene' || role === 'model') score -= 35;
+    else if (role === 'hangtag' || role === 'size_chart' || role === 'lab_report') score -= 60;
+    else if (role === 'packaging') score -= 40;
+    else if (role === 'on_model' || role === 'scene' || role === 'model') score -= 35;
     if (BAD_NAME.test(name)) score -= 80;
     if (/场景|模特|上身|街拍|lookbook|scene|\bmodel\b/i.test(name)) score -= 40;
     if (GOOD_NAME.test(name) && !/场景|模特|上身|街拍|lookbook|scene|\bmodel\b/i.test(name)) score += 30;
@@ -100,7 +101,7 @@ async function visionPickOne(
 选出最适合做「列表首图/封面」的一张。
 必须排除：尺码表、质检/检验报告、吊牌文字、纯文字、优惠券、过近局部、单据二维码。
 优先：全身/半身挂拍、平铺主图、一眼看清衣服。
-只回一行 JSON：{"best_index":0,"type":"main|multi_color|detail|size_chart|lab_report|hangtag|other","reason":"一句话","reject":[{"index":1,"type":"lab_report"}]}`,
+只回一行 JSON：{"best_index":0,"type":"main|multi_color|detail|on_model|packaging|size_chart|lab_report|hangtag|other","reason":"一句话","reject":[{"index":1,"type":"lab_report"}]}`,
     },
   ];
   for (let i = 0; i < pool.length; i++) {
@@ -150,7 +151,7 @@ export async function selectCoverImage(
     const name = c.filename || path.basename(c.localPath || '');
     const role = (c.roleHint || '').toLowerCase();
     if (/\/promo\//i.test(c.localPath || '') || /\/promo\//i.test(name)) return false;
-    if (role === 'hangtag' || role === 'scene' || role === 'model') return false;
+    if (role === 'hangtag' || role === 'size_chart' || role === 'lab_report' || role === 'packaging' || role === 'on_model' || role === 'scene' || role === 'model') return false;
     if (BAD_NAME.test(name) && !GOOD_NAME.test(name)) return false;
     if (/场景|模特|上身|街拍|lookbook|\bmodel\b/i.test(name) && !/挂拍|平铺|主图/i.test(name)) return false;
     if (c.localPath && fs.existsSync(c.localPath) && looksLikeDocument(c.localPath)) return false;
@@ -251,12 +252,12 @@ export function displayOrderBucket(item: DisplayOrderItem): number {
   const type = (item.typeHint || '').toLowerCase();
   const name = item.filename || (item.localPath ? path.basename(item.localPath) : '');
 
-  if (DOC_TYPES.has(role) || DOC_TYPES.has(type) || role === 'hangtag') return 3;
+  if (DOC_TYPES.has(role) || DOC_TYPES.has(type) || role === 'hangtag' || role === 'size_chart' || role === 'lab_report' || role === 'packaging') return 3;
   if (BAD_NAME.test(name) && !MAIN_ONLY_NAME.test(name)) return 3;
   if (item.localPath && fs.existsSync(item.localPath) && looksLikeDocument(item.localPath)) return 3;
 
   if (role === 'detail' || type === 'detail') return 1;
-  if (role === 'scene' || role === 'model' || type === 'scene' || type === 'model') return 2;
+  if (role === 'on_model' || role === 'scene' || role === 'model' || type === 'scene' || type === 'model' || type === 'on_model') return 2;
   if (SCENE_NAME.test(name)) return 2;
 
   if (role === 'main' || role === 'multi_color' || type === 'main' || type === 'multi_color') return 0;

@@ -43,3 +43,33 @@ export function isStableUploadedMediaUrl(url: string): boolean {
     /^https?:\/\/[^/]+\/media\//i.test(check)
   );
 }
+
+
+/** 是否已是绝对 http(s) URL（含误拼成 OSS/prefix + https 的双前缀） */
+export function isAbsoluteHttpUrl(value: string | null | undefined): boolean {
+  const raw = String(value || '').trim();
+  if (!raw) return false;
+  if (/^https?:\/\//i.test(raw)) return true;
+  // 历史双前缀：https://xy-tradex.../xingma-stall/https://other...
+  return /\/https?:\/\//i.test(raw);
+}
+
+/**
+ * 归一 objectKey / URL：
+ * - 已是 http(s) → 若含双前缀则抽出内层绝对 URL
+ * - 相对 key 误含嵌套 http(s) → 抽出内层
+ * - 其它相对 key → 原样（由 publicUrl/fullKey 再拼）
+ */
+export function unwrapAbsoluteMediaUrl(value: string | null | undefined): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) {
+    // 双前缀：https://own-oss/.../https://upstream...
+    const inner = raw.match(/https?:\/\/[^\s]+?\/(https?:\/\/.+)$/i);
+    if (inner) return inner[1];
+    return raw;
+  }
+  const embedded = raw.match(/(https?:\/\/.+)$/i);
+  if (embedded && /https?:\/\//i.test(raw)) return embedded[1];
+  return raw;
+}

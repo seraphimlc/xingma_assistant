@@ -25,6 +25,7 @@ import { Product } from '../common/entities/product.entity';
 import { MediaAsset } from '../common/entities/media-asset.entity';
 import { PromoSetEntity } from '../common/entities/promo-set.entity';
 import { OssClient } from '../media/oss.client';
+import { findTemplate, isVideoTemplate } from '../promo/promo.templates';
 
 @Injectable()
 export class JobsService {
@@ -36,6 +37,16 @@ export class JobsService {
     @Optional() private readonly dataSource?: DataSource,
     @Optional() private readonly oss?: OssClient,
   ) {}
+
+  /** params.kind 缺失时仍按 templateId 识别视频，避免 orphan 重试成 promo_image */
+  private isPromoVideoSet(
+    templateId: string | null | undefined,
+    params: Record<string, unknown> | null | undefined,
+  ): boolean {
+    const kind = String((params as any)?.kind || (params as any)?.mediaKind || '');
+    if (kind === 'video' || kind === 'promo_video') return true;
+    return isVideoTemplate(findTemplate(String(templateId || (params as any)?.templateId || '')));
+  }
 
   private jobs(): Repository<JobEntity> {
     if (!(this.dataSource && process.env.DB_ENABLED === 'true')) {
@@ -319,8 +330,8 @@ export class JobsService {
       }
     }
     const params = (row.params || {}) as any;
-    const kind = String(params.kind || params.mediaKind || '');
-    const isVideo = kind === 'video' || kind === 'promo_video';
+    const isVideo = this.isPromoVideoSet(row.templateId, params);
+    const kind = isVideo ? 'video' : String(params.kind || params.mediaKind || 'image');
     const type = isVideo ? 'promo_video' : 'promo_image';
     const productId = String(row.productId || '').trim();
     const err =
@@ -494,8 +505,8 @@ export class JobsService {
           }
         }
         const params = (row.params || {}) as any;
-        const kind = String(params.kind || params.mediaKind || '');
-        const isVideo = kind === 'video' || kind === 'promo_video';
+        const isVideo = this.isPromoVideoSet(row.templateId, params);
+        const kind = isVideo ? 'video' : String(params.kind || params.mediaKind || 'image');
         const err =
           (Array.isArray(row.images) &&
             row.images.map((i: any) => i?.error).find((e: any) => e)) ||
@@ -584,6 +595,9 @@ export class JobsService {
     if (row.status === 'succeeded') {
       throw new BadRequestException('已完成的任务无需重试');
     }
+    if (isUnrecognizedPublishResult(row.type, (row.result || {}) as any)) {
+      throw new BadRequestException('识别失败不可重试，请重新选图发品');
+    }
     // 失败 / 取消一律可重跑：重置 attempts，强制重新排队
     row.status = 'queued';
     row.error = null;
@@ -592,7 +606,16 @@ export class JobsService {
     row.nextRunAt = null;
     row.startedAt = null;
     row.attempts = 0;
-    row.progress = { percent: 0, step: 'queued', message: '重新排队' };
+    {
+      const prevP = (row.progress || {}) as Record<string, unknown>;
+      row.progress = {
+        percent: 0,
+        step: 'queued',
+        message: '重新排队',
+        ...(typeof prevP.done === 'number' ? { done: prevP.done } : {}),
+        ...(typeof prevP.total === 'number' ? { total: prevP.total } : {}),
+      };
+    }
     await repo.save(row);
     await this.appendEvent(row, 'retry', '用户触发重试（已重置次数）');
     await this.revivePromoSetForRequeuedJob(row);
@@ -633,7 +656,16 @@ export class JobsService {
             existing.nextRunAt = null;
             existing.startedAt = null;
             existing.attempts = 0;
-            existing.progress = { percent: 0, step: 'queued', message: '重新排队' };
+            {
+              const prevP = (existing.progress || {}) as Record<string, unknown>;
+              existing.progress = {
+                percent: 0,
+                step: 'queued',
+                message: '重新排队',
+                ...(typeof prevP.done === 'number' ? { done: prevP.done } : {}),
+                ...(typeof prevP.total === 'number' ? { total: prevP.total } : {}),
+              };
+            }
             await this.jobs().save(existing);
             await this.appendEvent(existing, 'retry', '用户触发重试（孤儿组已挂回 job）');
             await this.revivePromoSetForRequeuedJob(existing);
@@ -647,11 +679,11 @@ export class JobsService {
     }
 
     const params = (setRow.params || {}) as Record<string, unknown>;
-    const kind = String((params as any).kind || (params as any).mediaKind || '');
-    const isVideo = kind === 'video' || kind === 'promo_video';
-    const type: JobType = isVideo ? 'promo_video' : 'promo_image';
     const productId = String(setRow.productId || '').trim();
     const templateId = String(setRow.templateId || (params as any).templateId || '').trim();
+    const isVideo = this.isPromoVideoSet(templateId, params);
+    const kind = isVideo ? 'video' : String((params as any).kind || (params as any).mediaKind || 'image');
+    const type: JobType = isVideo ? 'promo_video' : 'promo_image';
     const refIds = ((params as any).referenceAssetIds || []).filter(Boolean);
     if (!productId || !templateId || !refIds.length) {
       throw new BadRequestException('该组缺少生成参数，无法重新生成');
@@ -765,11 +797,16 @@ export class JobsService {
       row.nextRunAt = null;
       row.finishedAt = null;
       row.error = null;
-      row.progress = {
-        percent: 0,
-        step: 'queued',
-        message: msg,
-      };
+      {
+        const prevP = (row.progress || {}) as Record<string, unknown>;
+        row.progress = {
+          percent: 0,
+          step: 'queued',
+          message: msg,
+          ...(typeof prevP.done === 'number' ? { done: prevP.done } : {}),
+          ...(typeof prevP.total === 'number' ? { total: prevP.total } : {}),
+        };
+      }
       await repo.save(row);
       await this.appendEvent(
         row,
@@ -841,11 +878,9 @@ export class JobsService {
         const prev = row.status;
         row.status = 'generating';
         row.jobId = job.id;
-        const kind = String(
-          (row.params as any)?.kind || (row.params as any)?.mediaKind || '',
-        );
         const isVideo =
-          job.type === 'promo_video' || kind === 'video' || kind === 'promo_video';
+          job.type === 'promo_video' ||
+          this.isPromoVideoSet(row.templateId, (row.params || {}) as any);
         if (isVideo) {
           row.images = [{ index: 0, status: 'pending' }] as any;
         } else if (Array.isArray(row.images) && row.images.length) {
@@ -942,9 +977,11 @@ export class JobsService {
   }
 
   async markSucceeded(job: JobEntity, result: Record<string, unknown>) {
-    job.status = 'succeeded';
+    const rr = (result || {}) as Record<string, any>;
+    const unrecognized =
+      job.type === 'publish_product' &&
+      (rr.recognized === false || rr.outcome === '未识别出商品' || rr.styleNoProvisional === true);
     job.result = result;
-    job.error = null;
     job.finishedAt = new Date();
     job.lockedBy = null;
     const prev = (job.progress || {}) as Record<string, unknown>;
@@ -960,11 +997,30 @@ export class JobsService {
         : typeof prev.total === 'number'
           ? prev.total
           : undefined;
+    if (unrecognized) {
+      const reason = String(rr.failureReason || rr.outcome || '未识别出商品').slice(0, 200);
+      job.status = 'failed';
+      job.error = `识别失败：${reason}`.slice(0, 800);
+      job.progress = {
+        ...prev,
+        percent: 100,
+        step: 'failed',
+        message: '识别失败',
+        failureReason: reason,
+        ...(done != null ? { done } : {}),
+        ...(total != null ? { total } : {}),
+      };
+      await this.jobs().save(job);
+      await this.appendEvent(job, 'failed', `识别失败：${reason}`, { keys: Object.keys(result || {}) }, 'warn');
+      return;
+    }
+    job.status = 'succeeded';
+    job.error = null;
     job.progress = {
       ...prev,
       percent: 100,
       step: 'done',
-      message: done != null && total != null ? `完成 ${done}/${total}` : '完成',
+      message: done != null && total != null ? `已完成 ${done}/${total}` : '已完成',
       ...(done != null ? { done } : {}),
       ...(total != null ? { total } : {}),
     };
@@ -1047,35 +1103,152 @@ export class JobsService {
     };
   }
 
+
+  /**
+   * 列表/详情展示用：终态任务若 progress.done 仍停在排队初值（旧 markSucceeded
+   * 把 ...(job.progress) 放在 step/message 之后覆盖），用 result.done/total 校准，
+   * 避免任务中心显示「完成 0/4」。c9ebb1a 修了写入，本方法补读路径与历史脏数据。
+   */
+  private progressForDto(
+    status: string,
+    progress: Record<string, unknown> | null | undefined,
+    result: Record<string, unknown> | null | undefined,
+  ): Record<string, unknown> {
+    const prev = { ...(progress || {}) } as Record<string, unknown>;
+    const rDone = (result as any)?.done;
+    const rTotal = (result as any)?.total;
+    const pDone = prev.done;
+    const pTotal = prev.total;
+    const done =
+      typeof rDone === 'number'
+        ? rDone
+        : typeof pDone === 'number'
+          ? pDone
+          : undefined;
+    const total =
+      typeof rTotal === 'number'
+        ? rTotal
+        : typeof pTotal === 'number'
+          ? pTotal
+          : undefined;
+    const terminal =
+      status === 'succeeded' || status === 'failed' || status === 'cancelled';
+    const doneStale =
+      typeof rDone === 'number' &&
+      typeof pDone === 'number' &&
+      pDone !== rDone;
+    const staleMid =
+      terminal &&
+      typeof prev.step === 'string' &&
+      prev.step !== 'done' &&
+      prev.step !== 'failed' &&
+      prev.step !== 'cancelled';
+    if (!terminal && !doneStale) {
+      return {
+        ...prev,
+        ...(done != null ? { done } : {}),
+        ...(total != null ? { total } : {}),
+      };
+    }
+    const step =
+      status === 'succeeded'
+        ? 'done'
+        : status === 'failed'
+          ? 'failed'
+          : status === 'cancelled'
+            ? 'cancelled'
+            : (prev.step as string) || undefined;
+    let message: string | undefined =
+      typeof prev.message === 'string' ? prev.message : undefined;
+    const failReason = String((result as any)?.failureReason || prev.failureReason || '').trim();
+    const unrecognized =
+      (result as any)?.recognized === false ||
+      (result as any)?.outcome === '未识别出商品' ||
+      (result as any)?.styleNoProvisional === true;
+    if (unrecognized || (status === 'failed' && (failReason || String(prev.message || '').includes('识别失败')))) {
+      message = '识别失败';
+      if (failReason) prev.failureReason = failReason;
+    } else if (status === 'succeeded') {
+      message =
+        done != null && total != null ? `已完成 ${done}/${total}` : '已完成';
+    } else if (staleMid || doneStale) {
+      // keep prev message for failed/cancelled unless we only needed done fix
+    }
+    return {
+      ...prev,
+      ...(status === 'succeeded' ? { percent: 100 } : {}),
+      ...(step ? { step } : {}),
+      ...(message != null ? { message } : {}),
+      ...(done != null ? { done } : {}),
+      ...(total != null ? { total } : {}),
+    };
+  }
+
   toDto(row: JobEntity) {
     const rec = this.toRecord(row);
-    const payload = summarizePayload(rec.type, rec.input);
+    const payload = summarizePayload(rec.type, rec.input) as Record<string, any>;
+    const resultRec = { ...((rec.result || {}) as Record<string, any>) };
+    const unrecognizedPublish = isUnrecognizedPublishResult(rec.type, resultRec);
     const resultStyleNo = String(
-      (rec.result as any)?.styleNo || (rec.result as any)?.product?.styleNo || '',
+      resultRec?.styleNo || resultRec?.product?.styleNo || '',
     ).trim();
-    const styleNo =
-      resultStyleNo ||
-      String((payload as any).styleNo || (payload as any).draftStyleNo || '').trim() ||
-      '';
-    // 发品完成后用结果款号重算标题；multi_color 忽略错误缓存「场景里的模特」
-    const titleInput: Record<string, unknown> = { ...(payload as any) };
-    if (rec.type === 'publish_product' && resultStyleNo) {
-      titleInput.styleNo = resultStyleNo;
+    // 识别失败：任何位置不得出现款号（含临时 V 号）
+    if (unrecognizedPublish) {
+      delete payload.styleNo;
+      delete payload.draftStyleNo;
+      if (payload.displayTitle && /款号|识别中|草稿|V\d{12}/i.test(String(payload.displayTitle))) {
+        delete payload.displayTitle;
+      }
+      resultRec.styleNo = null;
+      resultRec.draftStyleNo = null;
+      if (resultRec.product) {
+        resultRec.product = { ...resultRec.product, styleNo: null };
+      }
+    }
+    const styleNo = unrecognizedPublish
+      ? ''
+      : resultStyleNo ||
+        String(payload.styleNo || payload.draftStyleNo || '').trim() ||
+        '';
+    // 发品完成后用结果重算标题；未识别不得用临时号冒充款号
+    const titleInput: Record<string, unknown> = { ...payload };
+    if (rec.type === 'publish_product') {
       delete titleInput.displayTitle;
-      delete titleInput.draftStyleNo;
+      if (unrecognizedPublish) {
+        titleInput.recognized = false;
+        titleInput.outcome = '未识别出商品';
+        delete titleInput.styleNo;
+        delete titleInput.draftStyleNo;
+      } else if (resultStyleNo) {
+        titleInput.styleNo = resultStyleNo;
+        delete titleInput.draftStyleNo;
+      }
     }
     if (rec.type === 'promo_image' && String((payload as any).templateId || '') === 'multi_color') {
       delete titleInput.displayTitle;
     }
     const title = buildJobDisplayTitle(rec.type, titleInput);
+    const sourceMediaIds: string[] = (() => {
+      const fromResult = Array.isArray(resultRec.sourceMediaIds) ? resultRec.sourceMediaIds : [];
+      const fromPayload = Array.isArray(payload.mediaIds) ? payload.mediaIds : [];
+      const ids = (fromResult.length ? fromResult : fromPayload)
+        .map((x: any) => String(x || '').trim())
+        .filter(Boolean);
+      return [...new Set(ids)];
+    })();
     return {
       id: rec.id,
       type: rec.type,
       status: rec.status,
-      progress: rec.progress,
+      progress: this.progressForDto(rec.status, rec.progress as any, resultRec),
       payload,
-      result: rec.result,
-      error: rec.error,
+      result: resultRec,
+      error: unrecognizedPublish
+        ? String(rec.error || resultRec.failureReason || '识别失败')
+            .replace(/款号\s*V?\d[\w-]*/gi, '')
+            .replace(/V\d{12}[A-Z0-9]*/gi, '')
+            .trim() || '识别失败'
+        : rec.error,
       attempts: rec.attempts,
       maxAttempts: rec.maxAttempts,
       createdBy: row.createdBy,
@@ -1087,19 +1260,25 @@ export class JobsService {
       title,
       styleNo,
       productThumb: '' as string,
-      productId:
-        String((payload as any).productId || '').trim() ||
-        String((rec.result as any)?.productId || (rec.result as any)?.product?.id || '').trim() ||
-        '',
+      sourceMediaIds,
+      sourceImages: [] as Array<{ mediaId: string; url: string; filename?: string; role?: string }>,
+      canRetry: !(unrecognizedPublish || rec.status === 'succeeded' || rec.status === 'queued' || rec.status === 'running'),
+      unrecognized: unrecognizedPublish,
+      productId: (() => {
+        if (unrecognizedPublish) return '';
+        const fromResult = String(resultRec.productId || resultRec.product?.id || '').trim();
+        if (fromResult) return fromResult;
+        return String(payload.productId || '').trim();
+      })(),
       // 业主「查看」直达素材组详情；与 payload.setId 对齐
       setId:
-        String((payload as any).setId || '').trim() ||
-        String((rec.result as any)?.setId || '').trim() ||
+        String(payload.setId || '').trim() ||
+        String(resultRec.setId || '').trim() ||
         '',
     };
   }
 
-  /** 批量补商品款号 / 封面缩略图 */
+  /** 批量补商品款号 / 封面缩略图；发品任务用上传首图作 thumb，并填全量 sourceImages */
   private async enrichProductMeta(
     tenantId: string,
     items: Array<{
@@ -1108,12 +1287,23 @@ export class JobsService {
       productThumb?: string;
       payload?: any;
       result?: any;
+      sourceMediaIds?: string[];
+      sourceImages?: Array<{ mediaId: string; url: string; filename?: string; role?: string }>;
+      unrecognized?: boolean;
+      type?: string;
     }>,
   ) {
     if (!(this.dataSource && process.env.DB_ENABLED === 'true') || !items.length) return;
-    const ids = [
+
+    const mediaUrl = (objectKey: string) =>
+      this.oss
+        ? this.oss.publicUrl(objectKey)
+        : `${(process.env.MEDIA_PUBLIC_BASE || process.env.APP_BASE_URL || '').replace(/\/$/, '')}/media/${objectKey.replace(/^\/+/, '')}`;
+
+    const productIds = [
       ...new Set(
         items
+          .filter((i) => !i.unrecognized)
           .map(
             (i) =>
               i.productId ||
@@ -1126,42 +1316,100 @@ export class JobsService {
           .filter(Boolean),
       ),
     ];
-    if (!ids.length) return;
 
-    const products = await this.dataSource.getRepository(Product).find({
-      where: { tenantId, id: In(ids) },
-    });
-    const byId = new Map(products.map((p) => [p.id, p]));
-    const coverIds = products
-      .map((p) => (p.coverMediaIds || [])[0])
-      .filter(Boolean) as string[];
+    const sourceIdList: string[] = [];
+    for (const item of items) {
+      const ids = [
+        ...(Array.isArray(item.sourceMediaIds) ? item.sourceMediaIds : []),
+        ...(Array.isArray(item.payload?.mediaIds) ? item.payload.mediaIds : []),
+        ...(Array.isArray(item.result?.sourceMediaIds) ? item.result.sourceMediaIds : []),
+      ]
+        .map((x) => String(x || '').trim())
+        .filter(Boolean);
+      item.sourceMediaIds = [...new Set(ids)];
+      sourceIdList.push(...item.sourceMediaIds);
+    }
+
+    const byId = new Map<string, Product>();
+    const coverIds: string[] = [];
+    if (productIds.length) {
+      const products = await this.dataSource.getRepository(Product).find({
+        where: { tenantId, id: In(productIds) },
+      });
+      products.forEach((p) => byId.set(p.id, p));
+      for (const p of products) {
+        const c = (p.coverMediaIds || [])[0];
+        if (c) coverIds.push(c);
+      }
+    }
+
+    const mediaIdsNeeded = [...new Set([...coverIds, ...sourceIdList])];
     const mediaById = new Map<string, MediaAsset>();
-    if (coverIds.length) {
+    if (mediaIdsNeeded.length) {
       const rows = await this.dataSource.getRepository(MediaAsset).find({
-        where: { tenantId, id: In(coverIds), status: 'active' },
+        where: { tenantId, id: In(mediaIdsNeeded) },
       });
       rows.forEach((r) => mediaById.set(r.id, r));
     }
 
     for (const item of items) {
-      const pid = String(
-        item.productId ||
-          item.payload?.productId ||
-          item.result?.productId ||
-          item.result?.product?.id ||
-          '',
-      ).trim();
-      if (!pid) continue;
-      item.productId = pid;
-      const p = byId.get(pid);
-      if (!p) continue;
-      if (!item.styleNo) item.styleNo = p.styleNo || '';
-      const coverId = (p.coverMediaIds || [])[0];
-      const media = coverId ? mediaById.get(coverId) : undefined;
-      if (media?.objectKey) {
-        item.productThumb = this.oss
-          ? this.oss.publicUrl(media.objectKey)
-          : `${(process.env.MEDIA_PUBLIC_BASE || process.env.APP_BASE_URL || '').replace(/\/$/, '')}/media/${media.objectKey.replace(/^\/+/, '')}`;
+      if (item.unrecognized) {
+        item.styleNo = '';
+        item.productId = '';
+      } else {
+        const pid = String(
+          item.productId ||
+            item.payload?.productId ||
+            item.result?.productId ||
+            item.result?.product?.id ||
+            '',
+        ).trim();
+        if (pid) {
+          item.productId = pid;
+          const p = byId.get(pid);
+          if (p) {
+            if (!item.styleNo) item.styleNo = p.styleNo || '';
+            const coverId = (p.coverMediaIds || [])[0];
+            const media = coverId ? mediaById.get(coverId) : undefined;
+            if (media?.objectKey && !item.productThumb) {
+              item.productThumb = mediaUrl(media.objectKey);
+            }
+          }
+        }
+      }
+
+      // 发品：列表缩略图 = 首张上传图；详情 = 全部上传图
+      const orderedIds = item.sourceMediaIds || [];
+      const fromResultImgs = Array.isArray(item.result?.sourceImages)
+        ? item.result.sourceImages
+        : [];
+      const roleById = new Map<string, string>();
+      const nameById = new Map<string, string>();
+      for (const im of fromResultImgs) {
+        if (im?.mediaId) {
+          if (im.role) roleById.set(String(im.mediaId), String(im.role));
+          if (im.filename) nameById.set(String(im.mediaId), String(im.filename));
+        }
+      }
+      const images: Array<{ mediaId: string; url: string; filename?: string; role?: string }> = [];
+      for (const mid of orderedIds) {
+        const m = mediaById.get(mid);
+        const fromRes = fromResultImgs.find((x: any) => String(x?.mediaId) === mid);
+        const url =
+          (fromRes?.url && String(fromRes.url)) ||
+          (m?.objectKey ? mediaUrl(m.objectKey) : '');
+        if (!url) continue;
+        images.push({
+          mediaId: mid,
+          url,
+          filename: nameById.get(mid) || fromRes?.filename || '',
+          role: roleById.get(mid) || fromRes?.role || '',
+        });
+      }
+      item.sourceImages = images;
+      // 列表 thumb：优先首张上传图（识别失败无商品封面时也有图）
+      if (!item.productThumb && images[0]?.url) {
+        item.productThumb = images[0].url;
       }
     }
   }
@@ -1223,6 +1471,17 @@ function dedupePromoJobs<T extends {
     out.push(it);
   }
   return out;
+}
+
+function isUnrecognizedPublishResult(type: string, result: Record<string, any> | null | undefined): boolean {
+  if (type !== 'publish_product') return false;
+  const rr = result || {};
+  return (
+    rr.recognized === false ||
+    rr.outcome === '未识别出商品' ||
+    rr.styleNoProvisional === true ||
+    /识别失败|未识别/.test(String(rr.failureReason || ''))
+  );
 }
 
 function summarizePayload(type: string, input: Record<string, unknown>) {

@@ -10,16 +10,107 @@ import {
   isWeakProductTitle,
   isPlaceholderColorList,
   isProvisionalStyleNo,
-  provisionalStyleNo,
 } from '../../vision/publish-vision';
 import { AuthContext } from '../../common/interfaces/auth-context.interface';
 import {
   ColorSuggestionSource,
   PublishSuggestion,
   TitleSuggestionSource,
+  isRecognizedPublishImageRole,
+  PUBLISH_IMAGE_ROLE_LABELS,
 } from '../../products/publish/publish.types';
 
 const logger = new Logger('PublishJob');
+
+const REASON_ZH: Record<string, string> = {
+  no_product_material: '不是商品资料图',
+  not_garment_material: '图片不是服装类资料',
+  missing_style_no: '未识别到吊牌款号',
+  hangtag_unclear: '吊牌文字不清晰',
+  weak_title: '无法确认商品名称',
+  color_placeholder: '未识别到颜色',
+  title_fallback: '标题不可靠',
+  empty_title_filled: '标题为空',
+  style_no_conflict: '款号与已有商品冲突',
+};
+
+function humanPublishFailureReason(opts: {
+  subtitle?: string | null;
+  ocrNote?: string | null;
+  reviewReasons?: string[];
+  explicit?: string | null;
+}): string {
+  const explicit = String(opts.explicit || '').trim();
+  if (explicit) return explicit.length <= 60 ? explicit : explicit.slice(0, 60);
+  const sub = String(opts.subtitle || '').trim();
+  const note = String(opts.ocrNote || '').trim();
+  const blob = `${sub} ${note}`;
+  if (/不是商品资料|非商品资料|无关图片|生活照|不是资料图/.test(blob)) {
+    return '不是商品资料图';
+  }
+  if (/不是服装|非服装|不成衣|非成衣|不是衣服|非针织|非毛衫|非服装类资料/.test(blob)) {
+    return '图片不是服装类资料';
+  }
+  if (/吊牌.*(不清|模糊|无法|看不清)|看不清.*吊牌|无吊牌/.test(blob)) {
+    return '吊牌文字不清晰';
+  }
+  if (sub && /(未清晰|无法|不是|不能|失败|无吊牌|看不清)/.test(sub)) {
+    return sub.length <= 60 ? sub : sub.slice(0, 60);
+  }
+  const reasons = opts.reviewReasons || [];
+  const mapped = reasons.map((r) => REASON_ZH[r] || r).filter(Boolean);
+  if (mapped.length) return mapped.join('；');
+  if (note) return note.length <= 60 ? note : note.slice(0, 60);
+  return '未识别出商品';
+}
+
+async function failUnrecognized(
+  publish: PublishService,
+  user: AuthContext,
+  productId: string,
+  jobId: string,
+  opts: {
+    failureReason: string;
+    reviewReasons: string[];
+    cover?: { coverId?: string; via?: string; reason?: string };
+    titleSource?: TitleSuggestionSource;
+    colorSource?: ColorSuggestionSource;
+    colorSourceNote?: string;
+    subtitle?: string;
+    sourceMediaIds?: string[];
+    sourceImages?: Array<{ mediaId: string; url?: string; filename?: string; role?: string }>;
+  },
+) {
+  await publish.discardUnrecognizedProduct(user, productId);
+  logger.log(
+    `unrecognized jobId=${jobId} productId=${productId} discarded reason=${opts.failureReason}`,
+  );
+  return {
+    recognized: false,
+    outcome: '未识别出商品',
+    failureReason: opts.failureReason,
+    productId: null,
+    styleNo: null,
+    draftStyleNo: null,
+    name: null,
+    subtitle: opts.subtitle || null,
+    titleSource: opts.titleSource || 'fallback',
+    colorSource: opts.colorSource || 'placeholder',
+    colorSourceNote: opts.colorSourceNote || '',
+    coverMediaId: opts.cover?.coverId || null,
+    coverVia: opts.cover?.via || null,
+    coverReason: opts.cover?.reason || null,
+    skuCount: 0,
+    styleNoProvisional: true,
+    needReview: true,
+    reviewReasons: opts.reviewReasons,
+    status: null,
+    highComplete: false,
+    sourceMediaIds: opts.sourceMediaIds || [],
+    sourceImages: opts.sourceImages || [],
+  };
+}
+
 
 export function registerPublishProductHandler(
   jobs: JobsService,
@@ -47,12 +138,51 @@ export function registerPublishProductHandler(
       `analyze jobId=${job.id} productId=${productId} ms=${analyzeMs} ` +
         `ocr=${suggestion.ocrUsed} styleNo=${suggestion.styleNo || '-'} ` +
         `colors=${(suggestion.colors || []).slice(0, 8).join('/') || '-'} ` +
+        `roles=${(suggestion.images || []).map((i) => i.role).join('/') || '-'} ` +
         `note=${String(suggestion.ocrNote || '').slice(0, 200)}`,
+    );
+
+    const batch = publish.getBatch(user.tenantId, batchId);
+    const sourceMediaIds = batch.assets.map((a) => a.mediaId);
+    const sourceImages = batch.assets.map((a) => {
+      const im = suggestion.images?.find((i) => i.mediaId === a.mediaId);
+      return {
+        mediaId: a.mediaId,
+        url: a.url || '',
+        filename: a.filename || '',
+        role: im?.role || 'unknown',
+      };
+    });
+
+    // 锁定规则：批次命中任意 1/8 类即可；全部 unknown → 识别失败（不造假商品）
+    const recognizedImages = (suggestion.images || []).filter((i) =>
+      isRecognizedPublishImageRole(i.role),
+    );
+    if (!recognizedImages.length) {
+      const reasons = ['no_product_material'];
+      const blob = `${suggestion.ocrNote || ''} ${(suggestion.images || [])
+        .map((i) => i.ocrText || '')
+        .join(' ')}`;
+      const failZh = /自拍|风景|餐饮|聊天|截图|宠物|非服装|不是衣服/.test(blob)
+        ? REASON_ZH.not_garment_material
+        : REASON_ZH.no_product_material;
+      return failUnrecognized(publish, user, productId, job.id, {
+        failureReason: failZh,
+        reviewReasons: reasons,
+        subtitle: suggestion.subtitle,
+        colorSource: suggestion.colorSource,
+        colorSourceNote: suggestion.colorSourceNote,
+        sourceMediaIds,
+        sourceImages,
+      });
+    }
+    logger.log(
+      `taxonomy jobId=${job.id} hit=${recognizedImages.length}/${(suggestion.images || []).length} ` +
+        `types=${[...new Set(recognizedImages.map((i) => PUBLISH_IMAGE_ROLE_LABELS[i.role] || i.role))].join('、')}`,
     );
 
     await ctx.updateProgress({ percent: 35, step: 'cover', message: '多模态选封面' });
 
-    const batch = publish.getBatch(user.tenantId, batchId);
     const cands = batch.assets.map((a) => {
       const img = suggestion?.images?.find((i) => i.mediaId === a.mediaId);
       return {
@@ -96,7 +226,7 @@ export function registerPublishProductHandler(
       if (coverAsset?.localPath) titlePaths.push(coverAsset.localPath);
       for (const a of batch.assets) {
         const im = suggestion.images?.find((i) => i.mediaId === a.mediaId);
-        if (im?.role === 'hangtag') continue;
+        if (im && (im.role === 'hangtag' || im.role === 'size_chart' || im.role === 'lab_report' || im.role === 'packaging')) continue;
         if (a.localPath && !titlePaths.includes(a.localPath)) titlePaths.push(a.localPath);
       }
       if (!titlePaths.length && batch.assets[0]?.localPath) {
@@ -135,7 +265,7 @@ export function registerPublishProductHandler(
     if (isPlaceholderColorList(colors) || colorSource === 'placeholder') {
       await ctx.updateProgress({ percent: 58, step: 'colors', message: 'Vision 估色' });
       const colorPaths: string[] = [];
-      const preferRoles = new Set(['multi_color', 'main']);
+      const preferRoles = new Set(['multi_color', 'main', 'on_model']);
       for (const a of batch.assets) {
         const im = suggestion.images?.find((i) => i.mediaId === a.mediaId);
         if (im && preferRoles.has(im.role)) colorPaths.push(a.localPath);
@@ -172,24 +302,21 @@ export function registerPublishProductHandler(
     await ctx.updateProgress({
       percent: 72,
       step: 'confirm',
-      message: `封面已选(${cover.via})，更新草稿`,
+      message: `封面已选(${cover.via})，整理结果`,
     });
 
-    // OCR/分析款号优先；其次用户入队指定；再保留草稿临时款号；最后新生成
+    // OCR/分析款号优先；其次用户入队指定。禁止再生成临时款号冒充正式款号。
     let styleNo = String(suggestion.styleNo || '').trim();
     if (!styleNo) styleNo = String(job.input.styleNo || '').trim();
-    if (!styleNo) styleNo = String(job.input.draftStyleNo || '').trim();
+    // 入队占位 V 号不算识别成功
+    if (styleNo && isProvisionalStyleNo(styleNo)) styleNo = '';
+    const draftStyleNo = String(job.input.draftStyleNo || '').trim();
     let styleNoProvisional = false;
     if (!styleNo) {
-      styleNo = provisionalStyleNo(batchId);
-      styleNoProvisional = true;
-      needReview = true;
-      reviewReasons.push('missing_style_no');
-      logger.log(`provisional styleNo jobId=${job.id} productId=${productId} ${styleNo}`);
-    } else if (isProvisionalStyleNo(styleNo)) {
       styleNoProvisional = true;
       needReview = true;
       if (!reviewReasons.includes('missing_style_no')) reviewReasons.push('missing_style_no');
+      logger.log(`no real styleNo jobId=${job.id} productId=${productId} draft=${draftStyleNo || '-'}`);
     }
 
     const descParts: string[] = [];
@@ -274,16 +401,42 @@ export function registerPublishProductHandler(
     suggestion.reviewReasons = reviewReasons;
     batch.suggestion = suggestion;
 
-    // 用户 enqueue 时选了 draft 则尊重；否则高完成度 → on_sale，否则 draft
-    let finalStatus: 'on_sale' | 'off_sale' | 'draft' = 'draft';
-    if (statusIntent === 'draft') {
-      finalStatus = 'draft';
-    } else if (statusIntent === 'off_sale') {
+    // 无正式吊牌款号 = 未识别出商品：丢弃入队占位；仅有非吊牌 8 类也不造 SKU
+    if (!styleOk) {
+      const hasHangtagImg = (suggestion.images || []).some((i) => i.role === 'hangtag');
+      if (hasHangtagImg && !reviewReasons.includes('hangtag_unclear')) {
+        reviewReasons.push('hangtag_unclear');
+      }
+      const failureReason = humanPublishFailureReason({
+        subtitle,
+        ocrNote: suggestion.ocrNote,
+        reviewReasons,
+        explicit: hasHangtagImg ? REASON_ZH.hangtag_unclear : REASON_ZH.missing_style_no,
+      });
+      return failUnrecognized(publish, user, productId, job.id, {
+        failureReason,
+        reviewReasons,
+        cover: { coverId: cover.coverId, via: cover.via, reason: cover.reason },
+        titleSource,
+        colorSource,
+        colorSourceNote,
+        subtitle,
+        sourceMediaIds,
+        sourceImages: sourceImages.map((s) => {
+          const im = suggestion.images?.find((i) => i.mediaId === s.mediaId);
+          return { ...s, role: im?.role || s.role };
+        }),
+      });
+    }
+
+    // 商品仅在售/下架
+    let finalStatus: 'on_sale' | 'off_sale' = 'off_sale';
+    if (statusIntent === 'off_sale' || statusIntent === 'draft') {
       finalStatus = 'off_sale';
     } else if (highComplete) {
       finalStatus = 'on_sale';
     } else {
-      finalStatus = 'draft';
+      finalStatus = 'off_sale';
     }
 
     const levelId = String(job.input.levelId || process.env.DEFAULT_PRODUCT_LEVEL_ID || 'pl_open');
@@ -311,6 +464,8 @@ export function registerPublishProductHandler(
     );
 
     return {
+      recognized: true,
+      outcome: '已识别出商品',
       productId: product.id || productId,
       styleNo: product.styleNo || styleNo,
       name: product.name || name,
@@ -322,11 +477,16 @@ export function registerPublishProductHandler(
       coverVia: cover.via,
       coverReason: cover.reason,
       skuCount: skus.length,
-      styleNoProvisional,
+      styleNoProvisional: false,
       needReview,
       reviewReasons,
       status: finalStatus,
       highComplete,
+      sourceMediaIds,
+      sourceImages: sourceImages.map((s) => {
+        const im = images.find((i) => i.mediaId === s.mediaId);
+        return { ...s, role: im?.role || s.role };
+      }),
     };
   };
   jobs.registerHandler('publish_product', handle);

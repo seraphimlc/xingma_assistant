@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'crypto';
+import { unwrapAbsoluteMediaUrl } from '../common/utils/media-url';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const AliOss = require('ali-oss');
 
@@ -136,9 +137,14 @@ export class OssClient implements OnModuleInit {
     return this.provider === 'aliyun' && !!this.client;
   }
 
-  /** 业务 objectKey → OSS 完整 key */
+  /** 业务 objectKey → OSS 完整 key；绝对 http(s) 禁止再拼 OSS_PREFIX */
   fullKey(objectKey: string): string {
-    const key = String(objectKey || '').replace(/^\/+/, '');
+    const unwrapped = unwrapAbsoluteMediaUrl(objectKey);
+    if (/^https?:\/\//i.test(unwrapped)) {
+      // 调用方应走 publicUrl；此处绝不把绝对 URL 当 key 加前缀
+      return unwrapped;
+    }
+    const key = String(unwrapped || '').replace(/^\/+/, '');
     if (!this.prefix) return key;
     if (key === this.prefix || key.startsWith(`${this.prefix}/`)) return key;
     return `${this.prefix}/${key}`;
@@ -161,19 +167,19 @@ export class OssClient implements OnModuleInit {
    * - 其它：`${MEDIA_PUBLIC_BASE|APP_BASE_URL}/media/${objectKey}`
    */
   publicUrl(objectKey: string): string {
-    const raw = String(objectKey || '').trim();
+    const raw = unwrapAbsoluteMediaUrl(objectKey);
     // 外部 HTTPS 已是完整 URL（outfit agent 等），禁止再拼 bucket/prefix
     if (/^https?:\/\//i.test(raw)) return raw;
     if (this.isAliyun() && !this.serveLocal) {
       if (!this.publicRead) {
         try {
-          return this.signGetUrl(objectKey);
+          return this.signGetUrl(raw);
         } catch (e: any) {
           this.logger.warn(`signGetUrl failed: ${String(e?.message || e).slice(0, 120)}`);
         }
       }
       const base = this.publicBase.replace(/\/$/, '');
-      return `${base}/${this.fullKey(objectKey)}`;
+      return `${base}/${this.fullKey(raw)}`;
     }
     const base = (
       process.env.MEDIA_PUBLIC_BASE ||
@@ -181,7 +187,7 @@ export class OssClient implements OnModuleInit {
       this.config.get<string>('appBaseUrl') ||
       'http://127.0.0.1:3000'
     ).replace(/\/$/, '');
-    return `${base}/media/${String(objectKey).replace(/^\/+/, '')}`;
+    return `${base}/media/${String(raw).replace(/^\/+/, '')}`;
   }
 
   /** 短时复用签名，避免列表轮询每次换 URL 导致小程序图片闪烁 */
@@ -189,8 +195,10 @@ export class OssClient implements OnModuleInit {
 
   getSignedUrlSync(objectKey: string, ttlSec?: number): string {
     if (!this.client) throw new Error('OSS client not ready');
+    const raw = unwrapAbsoluteMediaUrl(objectKey);
+    if (/^https?:\/\//i.test(raw)) return raw;
     const ttl = ttlSec ?? this.signedTtl;
-    const full = this.fullKey(objectKey);
+    const full = this.fullKey(raw);
     const cacheKey = `${full}|${ttl}`;
     const now = Date.now();
     // 在过期前保留约 80% TTL，期间返回同一签名串

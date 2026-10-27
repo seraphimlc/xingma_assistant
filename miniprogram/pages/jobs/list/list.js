@@ -5,7 +5,7 @@ const { isUserVisibleJobType } = require('../../../utils/job-visibility');
 const STATUS_LABEL = {
   queued: '排队',
   running: '在做',
-  succeeded: '完成',
+  succeeded: '已完成',
   failed: '失败',
   cancelled: '取消',
 };
@@ -28,12 +28,25 @@ function fmtTime(ts) {
 
 function enrich(j) {
   const progress = j.progress || {};
-  const statusLabel = STATUS_LABEL[j.status] || j.status;
-  const tone = STATUS_TONE[j.status] || 'muted';
-  // 失败一律可重试；取消后也可重跑（后端会重置 attempts）
+  let statusLabel = STATUS_LABEL[j.status] || j.status;
+  let tone = STATUS_TONE[j.status] || 'muted';
+  const res = j.result || {};
+  const pubFail =
+    j.type === 'publish_product' &&
+    (res.recognized === false ||
+      res.outcome === '未识别出商品' ||
+      res.styleNoProvisional === true ||
+      (j.status === 'failed' && /识别失败|未识别/.test(String(j.error || (j.progress && j.progress.message) || ''))));
+  if (pubFail) {
+    statusLabel = '识别失败';
+    tone = 'err';
+  } else if (j.type === 'publish_product' && j.status === 'succeeded') {
+    statusLabel = '已完成';
+  }
+  // 宣传失败/取消可重试；发品「识别失败」禁止重试
   const isPromo = j.type === 'promo_image' || j.type === 'promo_video';
   const isOrphan = !!(j.orphanPromoSet || String(j.id || '').indexOf('orphan_') === 0);
-  const canRetry = j.status === 'failed' || j.status === 'cancelled';
+  const canRetry = !pubFail && (j.status === 'failed' || j.status === 'cancelled');
   const canCancel = j.status === 'queued' || j.status === 'running';
   const cancelLabel = j.status === 'running' ? '停止' : '取消';
   const retryLabel = j.status === 'cancelled' ? '重跑' : (isPromo ? '重新生成' : '重试');
@@ -47,11 +60,12 @@ function enrich(j) {
     (j.payload && j.payload.setId) ||
     (j.result && j.result.setId) ||
     '';
-  const styleNo =
+  let styleNo =
     j.styleNo ||
     (j.payload && (j.payload.styleNo || j.payload.draftStyleNo)) ||
     (j.result && (j.result.styleNo || (j.result.product && j.result.product.styleNo))) ||
     '';
+  if (pubFail || /^V\d{12}/i.test(String(styleNo || ''))) styleNo = '';
   const rawMsg = progress.message || '';
   const looksLikeId = /^(job_|pj_|ps_)[a-z0-9]+$/i.test(String(rawMsg).trim())
     || /^[a-f0-9]{6,}$/i.test(String(rawMsg).trim());
@@ -60,7 +74,7 @@ function enrich(j) {
     (j.payload && j.payload.displayTitle) ||
     (rawMsg && !looksLikeId && rawMsg !== '排队中' && rawMsg !== '执行中' ? rawMsg : '') ||
     (j.type === 'promo_image' ? '宣传生图' : j.type === 'promo_video' ? '宣传视频' : j.type === 'publish_product' ? '图片发品' : '任务');
-  const productThumb = j.productThumb || '';
+  const productThumb = j.productThumb || (j.sourceImages && j.sourceImages[0] && j.sourceImages[0].url) || '';
   const doneTotal =
     progress.done != null && progress.total != null
       ? `${progress.done}/${progress.total}`

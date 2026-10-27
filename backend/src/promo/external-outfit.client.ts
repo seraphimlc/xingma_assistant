@@ -1,3 +1,4 @@
+import { unwrapAbsoluteMediaUrl } from '../common/utils/media-url';
 /**
  * 外部穿搭工作流 Agent 客户端（LKB）。
  * 与自建羊毛衫流程并存；Token 仅从 env / 本机 key 文件读取，禁止写死进仓。
@@ -113,7 +114,10 @@ export class ExternalOutfitClient {
         agentCode: code,
       };
     }
-    const images = (req.garmentImages || []).map((u) => String(u || '').trim()).filter(Boolean).slice(0, 9);
+    const images = (req.garmentImages || [])
+      .map((u) => unwrapAbsoluteMediaUrl(u))
+      .filter((u) => /^https?:\/\//i.test(u))
+      .slice(0, 9);
     if (images.length < 1) {
       return { ok: false, imageUrls: [], raw: null, ms: 0, error: 'garmentImages 至少 1 张', agentCode: code };
     }
@@ -121,7 +125,8 @@ export class ExternalOutfitClient {
     // 实测：workflow.input 经 messages[0].content（JSON 字符串）传入；
     // OpenAPI 仅要求 messages；顶层 garmentImages 不会进 workflow.input。
     const workflowInput: Record<string, unknown> = { garmentImages: images };
-    if (req.modelImageUrl) workflowInput.modelImageUrl = req.modelImageUrl;
+    const modelUrl = unwrapAbsoluteMediaUrl(req.modelImageUrl);
+    if (/^https?:\/\//i.test(modelUrl)) workflowInput.modelImageUrl = modelUrl;
     if (req.instruction) workflowInput.instruction = req.instruction;
     const payload: Record<string, unknown> = {
       agentCode: code,

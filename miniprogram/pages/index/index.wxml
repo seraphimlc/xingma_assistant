@@ -10,8 +10,8 @@
     <view class="hint" wx:if="{{customerHint}}">{{customerHint}}</view>
     <view style="height:32rpx;"></view>
     <view class="section-title">档口管理</view>
-    <view class="muted small" wx:if="{{pendingInviteCode}}" style="margin-bottom:12rpx;">检测到邀请码 {{pendingInviteCode}}，将按员工邀请加入</view>
-    <view class="btn-primary" bindtap="enterWithWechat">{{pendingInviteCode ? '用邀请码加入档口' : '微信登录'}}</view>
+    <view class="muted small" wx:if="{{pendingInviteCode}}" style="margin-bottom:12rpx;">收到档口邀请，点下方加入</view>
+    <view class="btn-primary" bindtap="enterWithWechat">{{pendingInviteCode ? '加入档口' : '微信登录'}}</view>
     <block wx:if="{{showDevLogin}}">
       <view style="height:20rpx;"></view>
       <view class="muted">本地开发</view>

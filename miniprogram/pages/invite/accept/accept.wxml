@@ -1,16 +1,13 @@
 <view class="container">
   <view class="card" wx:if="{{loading}}">
     <view class="section">正在加入档口…</view>
-    <view class="muted">邀请码 {{code}}</view>
+    <view class="muted">请稍候</view>
   </view>
 
   <view class="card" wx:elif="{{error}}">
     <view class="section">无法加入</view>
     <view class="muted">{{error}}</view>
-    <view class="form" style="margin-top:20rpx;">
-      <input class="input" placeholder="输入邀请码" value="{{code}}" bindinput="onCodeInput" />
-      <view class="btn-primary mini" bindtap="retry">重新加入</view>
-    </view>
+    <view class="btn-primary mini" style="margin-top:20rpx;" bindtap="retry" wx:if="{{code}}">重试</view>
     <view class="btn-ghost mini" style="margin-top:16rpx;" bindtap="goHome">返回首页</view>
   </view>
 
@@ -54,11 +51,8 @@
 
   <view class="card" wx:elif="{{!code}}">
     <view class="section">加入档口</view>
-    <view class="muted">请扫描业主邀请小程序码，或输入邀请码</view>
-    <view class="form" style="margin-top:20rpx;">
-      <input class="input" placeholder="邀请码" value="{{code}}" bindinput="onCodeInput" />
-      <view class="btn-primary mini" bindtap="retry">加入</view>
-    </view>
+    <view class="muted">请打开业主发来的微信邀请卡片加入</view>
+    <view class="btn-ghost mini" style="margin-top:16rpx;" bindtap="goHome">返回首页</view>
   </view>
 
   <view class="card" wx:else>

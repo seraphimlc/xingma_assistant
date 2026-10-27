@@ -78,7 +78,7 @@ Page({
       wx.hideLoading();
       if (session.role !== 'owner' && session.role !== 'staff') {
         this.logout();
-        wx.showToast({ title: '非档口成员，请用业主发来的邀请卡片加入', icon: 'none', duration: 2500 });
+        wx.showToast({ title: '非档口成员，请打开业主发来的邀请卡片加入', icon: 'none', duration: 2500 });
         return;
       }
       this.goWorkbench();

@@ -25,6 +25,7 @@ import { MediaService } from '../media/media.service';
 import { buildPromoCaption } from './promo.captions';
 import { buildJobDisplayTitle } from '../jobs/job-display-title';
 import { VideoGenClient } from './video-gen.client';
+import { unwrapAbsoluteMediaUrl } from '../common/utils/media-url';
 import { LkbVideoClient, clampDuration, LkbVideoAttachment } from './lkb-video.client';
 import { draftVideoBeatScript, resolveVideoPromptZh, syncScriptFromBeats, VideoBeat } from './video-script';
 import { ExternalOutfitClient } from './external-outfit.client';
@@ -155,9 +156,9 @@ export class PromoService implements OnModuleInit {
     return d;
   }
   private publicUrl(objectKey: string) {
-    const k = String(objectKey || '').trim();
+    const k = unwrapAbsoluteMediaUrl(objectKey);
     if (/^https?:\/\//i.test(k)) return k;
-    return this.oss.publicUrl(objectKey);
+    return this.oss.publicUrl(k);
   }
 
   /**
@@ -166,15 +167,30 @@ export class PromoService implements OnModuleInit {
    * 微信 downloadFile 白名单已含 xy-tradex.oss-cn-shenzhen 等上游桶时可直链播放；
    * /api/media/external-play 仍保留作应急中转，本路径默认不再调用。
    */
+  /** 视频槽只接受明确成片；jpg/png 等静帧不得进 <video src> */
+  private looksLikeVideoUrl(url: string | null | undefined): boolean {
+    const u = String(url || '').trim();
+    if (!u) return false;
+    if (/\.(mp4|webm|mov)(\?|#|$)/i.test(u)) return true;
+    if (/\.(jpe?g|png|webp|gif|bmp|heic)(\?|#|$)/i.test(u)) return false;
+    if (/workflow-without_model/i.test(u)) return false;
+    return /^https?:\/\//i.test(u);
+  }
+
   private itemPlayUrl(
     it: { objectKey?: string | null; externalUrl?: string | null; url?: string | null },
+    opts?: { requireVideo?: boolean },
   ): string | null {
     const ext = String(it?.externalUrl || it?.url || '').trim();
     if (/^https?:\/\//i.test(ext)) {
+      if (opts?.requireVideo && !this.looksLikeVideoUrl(ext)) return null;
       return ext;
     }
     const key = String(it?.objectKey || '').trim();
     if (!key) return null;
+    if (opts?.requireVideo && !/\.(mp4|webm|mov)$/i.test(key) && !this.looksLikeVideoUrl(key)) {
+      return null;
+    }
     return this.publicUrl(key);
   }
 
@@ -223,7 +239,7 @@ export class PromoService implements OnModuleInit {
    * 失败返回 null（调用方决定降级或报错）。
    */
   private async ensureLocal(objectKey: string): Promise<string | null> {
-    const key = String(objectKey || '').trim();
+    const key = unwrapAbsoluteMediaUrl(objectKey);
     if (!key) return null;
 
     if (path.isAbsolute(key)) {
@@ -1133,15 +1149,17 @@ export class PromoService implements OnModuleInit {
     try {
       let r: { buffer?: Buffer; mime: string; via: string; videoId: string; videoUrl?: string; seconds?: number; size?: string };
       if (engine === 'lkb') {
-        // Demo/prod 稳妥路径：1 张自有 OSS 作 first_frame + FIRST_LAST_FRAME（历史 SUCCEEDED 样本）。
-        // FREE+多 reference_image 今日触发 fixed channel / ratio-resolution 拒参。可调 VIDEO_LKB_MAX_REF_IMAGES。
+        // 2026-10-27: FREE + reference_image 已 SUCCEEDED (LKB 46671)；FIRST_LAST_FRAME smoke 46672 反被 ratio 拒。
+        // 只传自有 OSS 公网 URL；默认 1 张降通道压力。可调 VIDEO_LKB_MAX_REF_IMAGES。
         const maxLkbRefs = Math.max(
           1,
-          Math.min(9, parseInt(process.env.VIDEO_LKB_MAX_REF_IMAGES || '1', 10) || 1),
+          Math.min(3, parseInt(process.env.VIDEO_LKB_MAX_REF_IMAGES || '1', 10) || 1),
         );
         const ranked = refs
           .map((r, i) => ({ r, i, url: this.publicUrl(r!.objectKey) }))
           .filter((x) => /^https?:\/\//i.test(x.url))
+          // 排除被错误拼成 xy-tradex/.../https://... 的双 URL；优先非外部 https objectKey
+          .filter((x) => !/xingma-stall\/https?:/i.test(x.url))
           .sort((a, b) => {
             const ae = /^https?:\/\//i.test(String(a.r!.objectKey)) ? 1 : 0;
             const be = /^https?:\/\//i.test(String(b.r!.objectKey)) ? 1 : 0;
@@ -1153,32 +1171,17 @@ export class PromoService implements OnModuleInit {
             `LKB refs capped ${refUrls.length}→${useUrls.length} (VIDEO_LKB_MAX_REF_IMAGES=${maxLkbRefs})`,
           );
         }
-        const attachments: LkbVideoAttachment[] = [];
-        if (useUrls.length) {
-          attachments.push({
-            type: 'image',
-            uri: useUrls[0],
-            mediaType: 'image/jpeg',
-            name: 'first_frame',
-            metadata: { role: 'first_frame' },
-          });
-          for (let i = 1; i < useUrls.length; i++) {
-            attachments.push({
-              type: 'image',
-              uri: useUrls[i],
-              mediaType: 'image/jpeg',
-              name: `ref_${i}`,
-              metadata: { role: 'reference_image' },
-            });
-          }
-        }
-        const taskType = attachments.some((a) => a.metadata.role === 'first_frame')
-          ? 'FIRST_LAST_FRAME'
-          : 'FREE';
+        const attachments: LkbVideoAttachment[] = useUrls.map((uri, i) => ({
+          type: 'image' as const,
+          uri,
+          mediaType: 'image/jpeg',
+          name: `product_ref_${i + 1}`,
+          metadata: { role: 'reference_image' as const },
+        }));
         r = await this.lkbVideo.generate({
           prompt: promptZh,
           duration: seconds,
-          taskType,
+          taskType: 'FREE',
           attachments,
           generateAudio: true,
           watermark: false,
@@ -1522,11 +1525,16 @@ export class PromoService implements OnModuleInit {
   async regenerateSet(user: AuthContext, productId: string, setId: string) {
     const set = await this.getSetEntity(user, productId, setId);
     const p = (set.params || {}) as unknown as GenerateInput;
-    if (!p.templateId || !(p.referenceAssetIds || []).length) {
+    const templateId = String(p.templateId || set.templateId || '').trim();
+    if (!templateId || !(p.referenceAssetIds || []).length) {
       throw new BadRequestException('该组缺少生成参数，无法重生成');
     }
+    const tpl = findTemplate(templateId);
+    const forceVideo = isVideoTemplate(tpl);
     return this.generate(user, productId, {
       ...p,
+      templateId,
+      mediaKind: forceVideo ? 'video' : p.mediaKind || 'image',
       setId,
       regenIndexes: undefined,
       regenNonce: newId('rg'),
@@ -1542,13 +1550,19 @@ export class PromoService implements OnModuleInit {
   async regenerateImages(user: AuthContext, productId: string, setId: string, indexes: number[]) {
     const set = await this.getSetEntity(user, productId, setId);
     const p = (set.params || {}) as unknown as GenerateInput;
-    if (!p.templateId || !(p.referenceAssetIds || []).length) {
+    const templateId = String(p.templateId || set.templateId || '').trim();
+    if (!templateId || !(p.referenceAssetIds || []).length) {
       throw new BadRequestException('该组缺少生成参数，无法重生成');
+    }
+    if (isVideoTemplate(findTemplate(templateId))) {
+      throw new BadRequestException('视频素材请整组重新生成，不支持按张局部重生');
     }
     const idxs = [...new Set((indexes || []).map((n) => Number(n)).filter((n) => Number.isInteger(n) && n >= 0))];
     if (!idxs.length) throw new BadRequestException('请指定要重生成的图片下标');
     return this.generate(user, productId, {
       ...p,
+      templateId,
+      mediaKind: 'image',
       setId,
       regenIndexes: idxs,
       regenNonce: newId('rg'),
@@ -1576,6 +1590,16 @@ export class PromoService implements OnModuleInit {
   ) {
     const tpl = findTemplate(String(input?.templateId || ''));
     if (!tpl) throw new Error('未知模板');
+    if (
+      isVideoTemplate(tpl) ||
+      input?.mediaKind === 'video' ||
+      String(input?.kind || '') === 'video' ||
+      String(input?.mediaKind || '') === 'promo_video'
+    ) {
+      throw new Error(
+        `模板 ${tpl.id} 是视频任务，不能走 promo_image/生图；请重新提交挂拍短视频`,
+      );
+    }
     const outfitEngine = this.externalOutfit.engineMode();
     if (outfitEngine !== 'external' && !this.gen.configured()) {
       throw new Error('服务端未配置生图密钥');
@@ -2884,19 +2908,34 @@ export class PromoService implements OnModuleInit {
 
   // ---------- 宣传图组（UI 以 set 为中心） ----------
   private setDto(row: PromoSetEntity) {
-    const kindEarly =
-      (row as any).kind || (row.params as any)?.kind || (row.params as any)?.mediaKind || 'image';
+    const tpl = findTemplate(row.templateId);
+    const kindRaw =
+      (row as any).kind || (row.params as any)?.kind || (row.params as any)?.mediaKind || '';
+    // 视频模板强制 kind=video（历史组 params 缺 kind 时勿当图、勿被 orphan 重试成 promo_image）
+    const kind =
+      isVideoTemplate(tpl) || kindRaw === 'video' || kindRaw === 'promo_video'
+        ? 'video'
+        : kindRaw || 'image';
+    const requireVideo = kind === 'video' || kind === 'promo_video';
     const images = (row.images || []).map((i) => {
       const regenerating = i.status === 'pending' || i.status === 'running';
+      const playUrl = !regenerating ? this.itemPlayUrl(i, { requireVideo }) : null;
+      const badVideoAsset =
+        requireVideo &&
+        i.status === 'done' &&
+        !playUrl &&
+        !!(i.objectKey || (i as any).externalUrl || (i as any).url);
       return {
         index: i.index,
-        status: i.status,
+        status: badVideoAsset ? 'failed' : i.status,
         poseId: i.poseId,
         sceneId: i.sceneId,
         mediaId: i.mediaId || null,
         // 重生中的槽位先藏旧图，列表立刻出现「生成中」占位
-        url: !regenerating ? this.itemPlayUrl(i) : null,
-        error: i.error,
+        url: playUrl,
+        error: badVideoAsset
+          ? '成片不是可播放视频（疑似封面/静帧图被误当作视频）'
+          : i.error,
         ms: i.ms,
         saved: !!i.mediaId,
         regenerating: !!regenerating && !!(i.objectKey || (i as any).externalUrl || (i as any).url),
@@ -2910,29 +2949,38 @@ export class PromoService implements OnModuleInit {
         compare: i.compare || null,
       };
     });
-    // done：当前成功可展示槽；重生中 status≠done，不计入
-    const done = images.filter((i) => i.status === 'done' && (i.url || i.mediaId)).length;
-    const tpl = findTemplate(row.templateId);
-    const kind = (row as any).kind || (row.params as any)?.kind || (row.params as any)?.mediaKind || 'image';
-    const jobType = kind === 'video' || kind === 'promo_video' ? 'promo_video' : 'promo_image';
+    // done：当前成功可展示槽；无有效视频 URL 的「假成功」不计
+    const done = images.filter((i) => i.status === 'done' && i.url).length;
+    const jobType = requireVideo ? 'promo_video' : 'promo_image';
     const displayTitle = buildJobDisplayTitle(jobType, {
       ...(row.params as any),
       templateId: row.templateId,
       displayTitle: row.templateId === 'multi_color' ? undefined : (row.params as any)?.displayTitle,
       styleNo: (row.params as any)?.styleNo,
     });
-    const posterUrl =
-      (row.params as any)?.posterUrl ||
-      (images.find((i) => i.url)?.url) ||
-      null;
+    const paramVideoUrl = String((row.params as any)?.videoUrl || '').trim();
+    const resolvedVideoUrl = requireVideo
+      ? (this.looksLikeVideoUrl(paramVideoUrl) ? paramVideoUrl : null) ||
+        images.find((i) => i.url)?.url ||
+        null
+      : null;
+    // 视频勿把成片 URL 塞进 <image> 封面；无独立 poster 时留空
+    const posterUrl = requireVideo
+      ? (row.params as any)?.posterUrl || null
+      : (row.params as any)?.posterUrl || (images.find((i) => i.url)?.url) || null;
+    const statusOut =
+      requireVideo && row.status === 'done' && done === 0 && images.some((i) => i.error)
+        ? 'failed'
+        : row.status;
     return {
       id: row.id,
       setId: row.id,
       productId: row.productId,
       kind,
       type: kind,
-      posterUrl: kind === 'video' || kind === 'promo_video' ? posterUrl : null,
-      coverUrl: kind === 'video' || kind === 'promo_video' ? posterUrl : null,
+      posterUrl: requireVideo ? posterUrl : null,
+      coverUrl: requireVideo ? posterUrl : null,
+      videoUrl: resolvedVideoUrl,
       templateId: row.templateId,
       templateName: displayTitle || tpl?.name || row.templateId,
       displayTitle,
@@ -2940,7 +2988,7 @@ export class PromoService implements OnModuleInit {
       caption: row.caption || '',
       jobId: row.jobId,
       legacyJobId: row.legacyJobId,
-      status: row.status,
+      status: statusOut,
       done,
       // 槽位总数以组为准：局部重生不得把 total 缩成「本次重生张数」
       total: Math.max(
@@ -2949,14 +2997,8 @@ export class PromoService implements OnModuleInit {
         done,
       ),
       // 视频时长（秒）：params.seconds；供 gallery 展示，避免 moov 未就绪时播放器显示 0:00
-      seconds:
-        kind === 'video' || kind === 'promo_video'
-          ? Number((row.params as any)?.seconds) || null
-          : null,
-      durationSec:
-        kind === 'video' || kind === 'promo_video'
-          ? Number((row.params as any)?.seconds) || null
-          : null,
+      seconds: requireVideo ? Number((row.params as any)?.seconds) || null : null,
+      durationSec: requireVideo ? Number((row.params as any)?.seconds) || null : null,
       items: images,
       createdAt: row.createdAt?.getTime?.() ?? row.createdAt,
       updatedAt: row.updatedAt?.getTime?.() ?? row.updatedAt,

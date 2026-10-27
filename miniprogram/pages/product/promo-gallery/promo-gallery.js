@@ -56,7 +56,12 @@ function enrichSet(s, prev) {
   const albumAllSelected = withUrl.length > 0 && albumSelectedCount === withUrl.length;
   const kind = s.kind || s.type || 'image';
   const isVideo = kind === 'video' || kind === 'promo_video';
-  const videoUrl = isVideo ? ((items.find((i) => i && i.url) || {}).url || '') : '';
+  const looksVideo = (u) => /\.(mp4|webm|mov)(\?|#|$)/i.test(String(u || ''));
+  const fromItems = isVideo
+    ? ((items.find((i) => i && looksVideo(i.url)) || {}).url || '')
+    : '';
+  const fromParams = isVideo && s.params && looksVideo(s.params.videoUrl) ? s.params.videoUrl : '';
+  const videoUrl = isVideo ? (s.videoUrl && looksVideo(s.videoUrl) ? s.videoUrl : (fromParams || fromItems || '')) : '';
   const thumbUrls = withUrl.slice(0, 4).map((i) => i.url);
   const secondsRaw = Number(s.seconds || s.durationSec || (s.params && s.params.seconds) || 0);
   const durationSec = secondsRaw > 0 ? Math.round(secondsRaw) : 0;
