@@ -974,9 +974,11 @@ export class JobsService {
   }
 
   async markSucceeded(job: JobEntity, result: Record<string, unknown>) {
-    job.status = 'succeeded';
+    const rr = (result || {}) as Record<string, any>;
+    const unrecognized =
+      job.type === 'publish_product' &&
+      (rr.recognized === false || rr.outcome === '未识别出商品' || rr.styleNoProvisional === true);
     job.result = result;
-    job.error = null;
     job.finishedAt = new Date();
     job.lockedBy = null;
     const prev = (job.progress || {}) as Record<string, unknown>;
@@ -992,11 +994,30 @@ export class JobsService {
         : typeof prev.total === 'number'
           ? prev.total
           : undefined;
+    if (unrecognized) {
+      const reason = String(rr.failureReason || rr.outcome || '未识别出商品').slice(0, 200);
+      job.status = 'failed';
+      job.error = `识别失败：${reason}`.slice(0, 800);
+      job.progress = {
+        ...prev,
+        percent: 100,
+        step: 'failed',
+        message: '识别失败',
+        failureReason: reason,
+        ...(done != null ? { done } : {}),
+        ...(total != null ? { total } : {}),
+      };
+      await this.jobs().save(job);
+      await this.appendEvent(job, 'failed', `识别失败：${reason}`, { keys: Object.keys(result || {}) }, 'warn');
+      return;
+    }
+    job.status = 'succeeded';
+    job.error = null;
     job.progress = {
       ...prev,
       percent: 100,
       step: 'done',
-      message: done != null && total != null ? `完成 ${done}/${total}` : '完成',
+      message: done != null && total != null ? `已完成 ${done}/${total}` : '已完成',
       ...(done != null ? { done } : {}),
       ...(total != null ? { total } : {}),
     };
@@ -1136,9 +1157,17 @@ export class JobsService {
             : (prev.step as string) || undefined;
     let message: string | undefined =
       typeof prev.message === 'string' ? prev.message : undefined;
-    if (status === 'succeeded') {
+    const failReason = String((result as any)?.failureReason || prev.failureReason || '').trim();
+    const unrecognized =
+      (result as any)?.recognized === false ||
+      (result as any)?.outcome === '未识别出商品' ||
+      (result as any)?.styleNoProvisional === true;
+    if (unrecognized || (status === 'failed' && (failReason || String(prev.message || '').includes('识别失败')))) {
+      message = '识别失败';
+      if (failReason) prev.failureReason = failReason;
+    } else if (status === 'succeeded') {
       message =
-        done != null && total != null ? `完成 ${done}/${total}` : '完成';
+        done != null && total != null ? `已完成 ${done}/${total}` : '已完成';
     } else if (staleMid || doneStale) {
       // keep prev message for failed/cancelled unless we only needed done fix
     }
@@ -1158,16 +1187,31 @@ export class JobsService {
     const resultStyleNo = String(
       (rec.result as any)?.styleNo || (rec.result as any)?.product?.styleNo || '',
     ).trim();
-    const styleNo =
-      resultStyleNo ||
-      String((payload as any).styleNo || (payload as any).draftStyleNo || '').trim() ||
-      '';
-    // 发品完成后用结果款号重算标题；multi_color 忽略错误缓存「场景里的模特」
+    const resultRec0 = (rec.result || {}) as Record<string, any>;
+    const unrecognizedPublish =
+      rec.type === 'publish_product' &&
+      (resultRec0.recognized === false ||
+        resultRec0.outcome === '未识别出商品' ||
+        resultRec0.styleNoProvisional === true);
+    const styleNo = unrecognizedPublish
+      ? ''
+      : resultStyleNo ||
+        String((payload as any).styleNo || (payload as any).draftStyleNo || '').trim() ||
+        '';
+    // 发品完成后用结果重算标题；未识别不得用临时号冒充款号
     const titleInput: Record<string, unknown> = { ...(payload as any) };
-    if (rec.type === 'publish_product' && resultStyleNo) {
-      titleInput.styleNo = resultStyleNo;
+    const resultRec = (rec.result || {}) as Record<string, any>;
+    if (rec.type === 'publish_product') {
       delete titleInput.displayTitle;
-      delete titleInput.draftStyleNo;
+      if (resultRec.recognized === false || resultRec.outcome === '未识别出商品' || resultRec.styleNoProvisional) {
+        titleInput.recognized = false;
+        titleInput.outcome = '未识别出商品';
+        delete titleInput.styleNo;
+        delete titleInput.draftStyleNo;
+      } else if (resultStyleNo) {
+        titleInput.styleNo = resultStyleNo;
+        delete titleInput.draftStyleNo;
+      }
     }
     if (rec.type === 'promo_image' && String((payload as any).templateId || '') === 'multi_color') {
       delete titleInput.displayTitle;
@@ -1192,10 +1236,15 @@ export class JobsService {
       title,
       styleNo,
       productThumb: '' as string,
-      productId:
-        String((payload as any).productId || '').trim() ||
-        String((rec.result as any)?.productId || (rec.result as any)?.product?.id || '').trim() ||
-        '',
+      productId: (() => {
+        const rr = (rec.result || {}) as Record<string, any>;
+        if (rec.type === 'publish_product' && (rr.recognized === false || rr.outcome === '未识别出商品' || rr.styleNoProvisional)) {
+          return '';
+        }
+        const fromResult = String(rr.productId || rr.product?.id || '').trim();
+        if (fromResult) return fromResult;
+        return String((payload as any).productId || '').trim();
+      })(),
       // 业主「查看」直达素材组详情；与 payload.setId 对齐
       setId:
         String((payload as any).setId || '').trim() ||

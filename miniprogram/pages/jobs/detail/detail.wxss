@@ -68,3 +68,22 @@
   word-break: break-all;
   line-height: 1.4;
 }
+
+.result-body {
+  margin-top: 8rpx;
+  font-size: 26rpx;
+  line-height: 1.55;
+  color: var(--color-text, #333);
+  word-break: break-all;
+}
+
+.result-fail {
+  margin-top: 10rpx;
+  padding: 12rpx 16rpx;
+  background: #fdecea;
+  color: #c62828;
+  border-radius: 8rpx;
+  font-size: 26rpx;
+  line-height: 1.5;
+  word-break: break-all;
+}

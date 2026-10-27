@@ -5,7 +5,7 @@ const { isUserVisibleJobType } = require('../../../utils/job-visibility');
 const STATUS_LABEL = {
   queued: '排队',
   running: '在做',
-  succeeded: '完成',
+  succeeded: '已完成',
   failed: '失败',
   cancelled: '取消',
 };
@@ -28,8 +28,21 @@ function fmtTime(ts) {
 
 function enrich(j) {
   const progress = j.progress || {};
-  const statusLabel = STATUS_LABEL[j.status] || j.status;
-  const tone = STATUS_TONE[j.status] || 'muted';
+  let statusLabel = STATUS_LABEL[j.status] || j.status;
+  let tone = STATUS_TONE[j.status] || 'muted';
+  const res = j.result || {};
+  const pubFail =
+    j.type === 'publish_product' &&
+    (res.recognized === false ||
+      res.outcome === '未识别出商品' ||
+      res.styleNoProvisional === true ||
+      (j.status === 'failed' && /识别失败|未识别/.test(String(j.error || (j.progress && j.progress.message) || ''))));
+  if (pubFail) {
+    statusLabel = '识别失败';
+    tone = 'err';
+  } else if (j.type === 'publish_product' && j.status === 'succeeded') {
+    statusLabel = '已完成';
+  }
   // 失败一律可重试；取消后也可重跑（后端会重置 attempts）
   const isPromo = j.type === 'promo_image' || j.type === 'promo_video';
   const isOrphan = !!(j.orphanPromoSet || String(j.id || '').indexOf('orphan_') === 0);

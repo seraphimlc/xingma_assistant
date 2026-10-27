@@ -74,9 +74,17 @@ function buildPromoTitle(p: Record<string, any>): string {
 }
 
 function buildPublishTitle(p: Record<string, any>): string {
+  // 未识别：禁止展示临时号/「识别中」「草稿」
+  if (p.recognized === false || p.outcome === '未识别出商品') {
+    return '选图发品 · 未识别出商品';
+  }
   const styleNo = String(p.styleNo || p.draftStyleNo || '').trim();
   if (styleNo && !isProvisionalStyleNo(styleNo)) {
     return `选图发品 · 款号${styleNo}`;
   }
-  return '识别中·草稿';
+  // 临时号等同未识别（不得冒充正式款号）
+  if (styleNo && isProvisionalStyleNo(styleNo)) {
+    return '选图发品 · 未识别出商品';
+  }
+  return '选图发品';
 }

@@ -10,7 +10,6 @@ import {
   isWeakProductTitle,
   isPlaceholderColorList,
   isProvisionalStyleNo,
-  provisionalStyleNo,
 } from '../../vision/publish-vision';
 import { AuthContext } from '../../common/interfaces/auth-context.interface';
 import {
@@ -20,6 +19,38 @@ import {
 } from '../../products/publish/publish.types';
 
 const logger = new Logger('PublishJob');
+
+const REASON_ZH: Record<string, string> = {
+  missing_style_no: '未识别到吊牌款号',
+  weak_title: '无法确认商品名称',
+  color_placeholder: '未识别到颜色',
+  title_fallback: '标题不可靠',
+  empty_title_filled: '标题为空',
+  style_no_conflict: '款号与已有商品冲突',
+};
+
+function humanPublishFailureReason(opts: {
+  subtitle?: string | null;
+  ocrNote?: string | null;
+  reviewReasons?: string[];
+}): string {
+  const sub = String(opts.subtitle || '').trim();
+  const note = String(opts.ocrNote || '').trim();
+  const blob = `${sub} ${note}`;
+  if (/不是服装|非服装|不成衣|非成衣|不是衣服|非针织|非毛衫/.test(blob)) {
+    const hit = sub || note;
+    return hit.length <= 40 ? hit : '图片不是服装类';
+  }
+  if (sub && /(未清晰|无法|不是|不能|失败|无吊牌|看不清)/.test(sub)) {
+    return sub.length <= 60 ? sub : sub.slice(0, 60);
+  }
+  const reasons = opts.reviewReasons || [];
+  const mapped = reasons.map((r) => REASON_ZH[r] || r).filter(Boolean);
+  if (mapped.length) return mapped.join('；');
+  if (note) return note.length <= 60 ? note : note.slice(0, 60);
+  return '未识别出商品';
+}
+
 
 export function registerPublishProductHandler(
   jobs: JobsService,
@@ -172,24 +203,21 @@ export function registerPublishProductHandler(
     await ctx.updateProgress({
       percent: 72,
       step: 'confirm',
-      message: `封面已选(${cover.via})，更新草稿`,
+      message: `封面已选(${cover.via})，整理结果`,
     });
 
-    // OCR/分析款号优先；其次用户入队指定；再保留草稿临时款号；最后新生成
+    // OCR/分析款号优先；其次用户入队指定。禁止再生成临时款号冒充正式款号。
     let styleNo = String(suggestion.styleNo || '').trim();
     if (!styleNo) styleNo = String(job.input.styleNo || '').trim();
-    if (!styleNo) styleNo = String(job.input.draftStyleNo || '').trim();
+    // 入队占位 V 号不算识别成功
+    if (styleNo && isProvisionalStyleNo(styleNo)) styleNo = '';
+    const draftStyleNo = String(job.input.draftStyleNo || '').trim();
     let styleNoProvisional = false;
     if (!styleNo) {
-      styleNo = provisionalStyleNo(batchId);
-      styleNoProvisional = true;
-      needReview = true;
-      reviewReasons.push('missing_style_no');
-      logger.log(`provisional styleNo jobId=${job.id} productId=${productId} ${styleNo}`);
-    } else if (isProvisionalStyleNo(styleNo)) {
       styleNoProvisional = true;
       needReview = true;
       if (!reviewReasons.includes('missing_style_no')) reviewReasons.push('missing_style_no');
+      logger.log(`no real styleNo jobId=${job.id} productId=${productId} draft=${draftStyleNo || '-'}`);
     }
 
     const descParts: string[] = [];
@@ -274,16 +302,48 @@ export function registerPublishProductHandler(
     suggestion.reviewReasons = reviewReasons;
     batch.suggestion = suggestion;
 
-    // 用户 enqueue 时选了 draft 则尊重；否则高完成度 → on_sale，否则 draft
-    let finalStatus: 'on_sale' | 'off_sale' | 'draft' = 'draft';
-    if (statusIntent === 'draft') {
-      finalStatus = 'draft';
-    } else if (statusIntent === 'off_sale') {
+    // 无正式款号 = 未识别出商品：丢弃入队占位，不把临时号写成商品
+    if (!styleOk) {
+      await publish.discardUnrecognizedProduct(user, productId);
+      logger.log(
+        `unrecognized jobId=${job.id} productId=${productId} discarded reasons=${reviewReasons.join(',') || '-'}`,
+      );
+      const failureReason = humanPublishFailureReason({
+        subtitle,
+        ocrNote: suggestion.ocrNote,
+        reviewReasons,
+      });
+      return {
+        recognized: false,
+        outcome: '未识别出商品',
+        failureReason,
+        productId: null,
+        styleNo: null,
+        name: null,
+        subtitle: subtitle || null,
+        titleSource,
+        colorSource,
+        colorSourceNote,
+        coverMediaId: cover.coverId,
+        coverVia: cover.via,
+        coverReason: cover.reason,
+        skuCount: 0,
+        styleNoProvisional: true,
+        needReview: true,
+        reviewReasons,
+        status: null,
+        highComplete: false,
+      };
+    }
+
+    // 商品仅在售/下架
+    let finalStatus: 'on_sale' | 'off_sale' = 'off_sale';
+    if (statusIntent === 'off_sale' || statusIntent === 'draft') {
       finalStatus = 'off_sale';
     } else if (highComplete) {
       finalStatus = 'on_sale';
     } else {
-      finalStatus = 'draft';
+      finalStatus = 'off_sale';
     }
 
     const levelId = String(job.input.levelId || process.env.DEFAULT_PRODUCT_LEVEL_ID || 'pl_open');
@@ -311,6 +371,8 @@ export function registerPublishProductHandler(
     );
 
     return {
+      recognized: true,
+      outcome: '已识别出商品',
       productId: product.id || productId,
       styleNo: product.styleNo || styleNo,
       name: product.name || name,
@@ -322,7 +384,7 @@ export function registerPublishProductHandler(
       coverVia: cover.via,
       coverReason: cover.reason,
       skuCount: skus.length,
-      styleNoProvisional,
+      styleNoProvisional: false,
       needReview,
       reviewReasons,
       status: finalStatus,

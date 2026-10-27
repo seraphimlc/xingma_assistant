@@ -366,7 +366,7 @@ export class PublishService implements OnModuleInit {
   }
 
   /**
-   * 入队时立刻落最小草稿（status=draft），缺吊牌/款号/颜色也可进编辑页。
+   * 入队时立刻落最小商品（status=off_sale），缺吊牌/款号/颜色也可进编辑页。
    */
   async createDraftProduct(
     user: AuthContext,
@@ -388,7 +388,7 @@ export class PublishService implements OnModuleInit {
       styleNo = provisionalStyleNo(batchId);
       styleNoProvisional = true;
     }
-    const name = String(opts.name || '').trim() || '识别中…';
+    const name = String(opts.name || '').trim() || '待补信息';
 
     let coverMediaIds = await this.relocateBatchAssets(user, batch, styleNo);
 
@@ -402,8 +402,8 @@ export class PublishService implements OnModuleInit {
         levelId: opts.levelId,
         groupId: opts.groupId ?? undefined,
         priceDisplay: opts.priceDisplay || 'show',
-        status: 'draft',
-        tags: ['识别中', ...(styleNoProvisional ? ['provisionalStyleNo'] : [])],
+        status: 'off_sale',
+        tags: ['待补信息', ...(styleNoProvisional ? ['provisionalStyleNo'] : [])],
         coverMediaIds,
         skus: [
           {
@@ -428,8 +428,8 @@ export class PublishService implements OnModuleInit {
           levelId: opts.levelId,
           groupId: opts.groupId ?? undefined,
           priceDisplay: opts.priceDisplay || 'show',
-          status: 'draft',
-          tags: ['识别中', 'provisionalStyleNo'],
+          status: 'off_sale',
+          tags: ['待补信息', 'provisionalStyleNo'],
           coverMediaIds,
           skus: [
             {
@@ -457,7 +457,40 @@ export class PublishService implements OnModuleInit {
     return product;
   }
 
-  async analyze(user: AuthContext, batchId: string, body?: { runOcr?: boolean }) {
+  /**
+   * 识别失败：删除入队时占位商品，避免临时款号冒充正式商品。
+   */
+  async discardUnrecognizedProduct(user: AuthContext, productId: string) {
+    if (!productId) return { ok: true, deleted: false };
+    try {
+      await this.products.remove(user, productId); // 现实现=下架；再尽量硬删占位
+    } catch (e: any) {
+      this.logger.warn(`discard soft-off failed productId=${productId}: ${String(e?.message || e).slice(0, 120)}`);
+    }
+    if (this.dataSource && process.env.DB_ENABLED === 'true') {
+      try {
+        await this.dataSource.query(
+          'DELETE FROM product_skus WHERE tenant_id = ? AND product_id = ?',
+          [user.tenantId, productId],
+        );
+        await this.dataSource.query(
+          'UPDATE media_assets SET product_id = NULL WHERE tenant_id = ? AND product_id = ?',
+          [user.tenantId, productId],
+        );
+        await this.dataSource.query(
+          'DELETE FROM products WHERE tenant_id = ? AND id = ?',
+          [user.tenantId, productId],
+        );
+        this.logger.log(`discardUnrecognizedProduct hard-deleted productId=${productId}`);
+        return { ok: true, deleted: true };
+      } catch (e: any) {
+        this.logger.warn(`discard hard-delete failed productId=${productId}: ${String(e?.message || e).slice(0, 160)}`);
+      }
+    }
+    return { ok: true, deleted: false };
+  }
+
+    async analyze(user: AuthContext, batchId: string, body?: { runOcr?: boolean }) {
     const batch = this.getBatch(user.tenantId, batchId);
     if (!batch.assets.length) throw new BadRequestException('批次内无图片');
     let suggestion;
@@ -573,7 +606,7 @@ export class PublishService implements OnModuleInit {
       description = description ? `${description}\n尺码：${sizeText}` : `尺码：${sizeText}`;
     }
 
-    const tags = [...(input.tags || [])].filter((t) => t && t !== '识别中');
+    const tags = [...(input.tags || [])].filter((t) => t && t !== '识别中' && t !== '待补信息');
     if (input.needReview && !tags.includes('needReview')) tags.push('needReview');
     if (!input.needReview) {
       const idx = tags.indexOf('needReview');
@@ -600,7 +633,7 @@ export class PublishService implements OnModuleInit {
       });
     } catch (e) {
       if (e instanceof ConflictException) {
-        // 识别款号与已有商品冲突：保留当前款号，强制 draft + needReview
+        // 识别款号与已有商品冲突：保留当前款号，强制下架 + needReview（无草稿态）
         this.logger.warn(
           `updateFromPublishJob styleNo conflict productId=${productId} wanted=${styleNo}`,
         );
@@ -612,7 +645,7 @@ export class PublishService implements OnModuleInit {
           description: description || null,
           levelId: input.levelId,
           priceDisplay: input.priceDisplay || 'show',
-          status: 'draft',
+          status: 'off_sale',
           tags,
           coverMediaIds,
         });
