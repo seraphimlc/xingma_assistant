@@ -46,3 +46,7 @@
     <view class="arrow muted">›</view>
   </view>
 </view>
+
+  <view class="card muted footer-tip" wx:if="{{loadingMore}}">加载更多…</view>
+  <view class="card muted footer-tip" wx:elif="{{list.length && !hasMore}}">没有更多了</view>
+  <view class="card muted footer-tip" wx:elif="{{list.length && hasMore}}">上拉加载更多</view>

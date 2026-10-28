@@ -30,8 +30,21 @@ export class CustomersController {
     @AuthUser() user: AuthContext,
     @Query('q') q?: string,
     @Query('levelId') levelId?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('attention') attention?: string,
   ) {
-    return this.customersService.list(user.tenantId, { q, levelId }, user);
+    return this.customersService.list(
+      user.tenantId,
+      {
+        q,
+        levelId,
+        page: page ? parseInt(page, 10) : 1,
+        pageSize: pageSize ? parseInt(pageSize, 10) : 20,
+        attention,
+      },
+      user,
+    );
   }
 
   /** 批量改等级（静态路径须在 :id 之前） */

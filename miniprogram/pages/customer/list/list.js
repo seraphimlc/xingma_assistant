@@ -2,6 +2,8 @@ const publishQueue = require('../../../utils/publish-upload-queue');
 const { request } = require('../../../utils/request');
 const { refreshCustomerTabBadge } = require('../../../utils/customer-tab-badge');
 
+const PAGE_SIZE = 20;
+
 function ensureStaff() {
   const app = getApp();
   const role = app.globalData.role || '';
@@ -46,6 +48,9 @@ Page({
     list: [],
     q: '',
     loading: true,
+    loadingMore: false,
+    page: 1,
+    hasMore: true,
     filter: '', // '' | pending
     filterChips: [
       { id: '', name: '全部' },
@@ -55,39 +60,56 @@ Page({
   onShow() {
     try { publishQueue.resumeAll(); } catch (e) { /* */ }
     if (!ensureStaff()) return;
-    this.load();
+    this.reload();
     refreshCustomerTabBadge();
   },
   onPullDownRefresh() {
-    Promise.all([this.load(), refreshCustomerTabBadge()]).finally(() => wx.stopPullDownRefresh());
+    Promise.all([this.reload(), refreshCustomerTabBadge()]).finally(() => wx.stopPullDownRefresh());
+  },
+  onReachBottom() {
+    if (!this.data.hasMore || this.data.loading || this.data.loadingMore) return;
+    this.loadMore();
   },
   onSearchInput(e) { this.setData({ q: e.detail.value }); },
-  onSearch() { this.load(); },
+  onSearch() { this.reload(); },
   onFilter(e) {
     this.setData({ filter: e.currentTarget.dataset.id || '' });
-    this.load();
+    this.reload();
   },
-  async load() {
-    this.setData({ loading: true });
+  reload() {
+    this.setData({ page: 1, hasMore: true, list: [] });
+    return this.fetchPage(1, false);
+  },
+  loadMore() {
+    return this.fetchPage(this.data.page + 1, true);
+  },
+  async fetchPage(page, append) {
+    if (append) this.setData({ loadingMore: true });
+    else this.setData({ loading: true });
     try {
-      const qs = [];
+      const qs = [`page=${page}`, `pageSize=${PAGE_SIZE}`];
       if (this.data.q) qs.push(`q=${encodeURIComponent(this.data.q)}`);
-      const res = await request({ url: `/api/customers${qs.length ? '?' + qs.join('&') : ''}` });
-      let raw = Array.isArray(res) ? res : (res.items || res || []);
-      // /api/customers 已附带 unread-summary 字段，避免再打一遍
-      let list = (raw || []).map(enrich);
+      if (this.data.filter === 'pending') qs.push('attention=pending');
+      const res = await request({ url: `/api/customers?${qs.join('&')}` });
+      // 兼容旧数组响应
+      let raw = Array.isArray(res) ? res : (res.items || []);
+      const total = Array.isArray(res) ? raw.length : (res.total != null ? res.total : raw.length);
       // 头像或昵称任一即可；两者皆无则不展示（与 API 一致；不去重）
-      list = list.filter((c) => {
+      let items = (raw || []).map(enrich).filter((c) => {
         const avatar = (c.avatarUrl || '').trim();
         const nick = (c.nickname || c.contactName || '').trim();
         return !!(avatar || nick);
       });
-      if (this.data.filter === 'pending') {
-        list = list.filter((c) => c.hasPendingInquiry || c.hasUnreadInquiry);
-      }
-      this.setData({ list, loading: false });
+      const list = append ? this.data.list.concat(items) : items;
+      this.setData({
+        list,
+        page,
+        hasMore: list.length < total && items.length >= PAGE_SIZE,
+        loading: false,
+        loadingMore: false,
+      });
     } catch (e) {
-      this.setData({ loading: false });
+      this.setData({ loading: false, loadingMore: false });
       wx.showToast({ title: e.message || '加载失败', icon: 'none' });
     }
   },

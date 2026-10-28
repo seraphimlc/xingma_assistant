@@ -3,5 +3,6 @@
   "usingComponents": {
     "upload-float": "/components/upload-float/upload-float"
   },
-  "enablePullDownRefresh": true
+  "enablePullDownRefresh": true,
+  "onReachBottomDistance": 80
 }

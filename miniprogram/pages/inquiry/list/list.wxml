@@ -19,8 +19,12 @@
     <view class="muted">{{item.statusLabel}} · {{item.content}}</view>
     <view class="muted" wx:if="{{item.handledNote}}">沟通：{{item.handledNote}}</view>
   </view>
-  <view class="card muted empty" wx:if="{{!list.length}}">
+  <view class="card muted" wx:if="{{loading && !list.length}}">加载中…</view>
+  <view class="card muted empty" wx:elif="{{!list.length}}">
     <view wx:if="{{status==='open'}}">暂无待沟通询价</view>
     <view wx:else>暂无询价</view>
   </view>
+  <view class="card muted footer-tip" wx:if="{{loadingMore}}">加载更多…</view>
+  <view class="card muted footer-tip" wx:elif="{{list.length && !hasMore}}">没有更多了</view>
+  <view class="card muted footer-tip" wx:elif="{{list.length && hasMore}}">上拉加载更多</view>
 </view>

@@ -85,11 +85,15 @@ Page({
     try {
       const [customerRes, inquiriesRes, viewedRes] = await Promise.all([
         request({ url: `/api/customers/${id}` }),
-        request({ url: `/api/inquiries?customerId=${encodeURIComponent(id)}` }).catch(() => []),
+        request({
+          url: `/api/inquiries?customerId=${encodeURIComponent(id)}&page=1&pageSize=50`,
+        }).catch(() => ({ items: [] })),
         request({ url: `/api/customers/${id}/viewed-products` }).catch(() => ({ items: [] })),
       ]);
       const customer = customerRes;
-      const inquiries = inquiriesRes || [];
+      const inquiries = Array.isArray(inquiriesRes)
+        ? inquiriesRes
+        : (inquiriesRes && inquiriesRes.items) || [];
       const viewedProducts = (viewedRes && viewedRes.items) || [];
       // mark-read 不挡首屏
       request({

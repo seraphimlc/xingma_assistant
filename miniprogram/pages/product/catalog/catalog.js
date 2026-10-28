@@ -1,6 +1,6 @@
 /**
  * 客户目录：某分组下可公开展示（客户鉴权后可见）的在售商品。
- * 从分享落地的商品详情进入，携带 groupId + shareEventId。
+ * 瀑布流双列；从分享落地的商品详情进入，携带 groupId + shareEventId。
  */
 const { request, ensureSilentSession } = require('../../../utils/request');
 
@@ -16,6 +16,25 @@ function normalize(p) {
   });
 }
 
+/** 按累计高度把商品分到左右列（无高度时交替） */
+function splitWaterfall(list, leftH, rightH) {
+  const leftList = [];
+  const rightList = [];
+  let lh = leftH || 0;
+  let rh = rightH || 0;
+  (list || []).forEach((item, idx) => {
+    const h = Number(item._h) || 0;
+    if (lh <= rh) {
+      leftList.push(item);
+      lh += h || (idx % 2 === 0 ? 1 : 1.01);
+    } else {
+      rightList.push(item);
+      rh += h || 1;
+    }
+  });
+  return { leftList, rightList, leftH: lh, rightH: rh };
+}
+
 Page({
   data: {
     groupId: '',
@@ -23,11 +42,16 @@ Page({
     shareEventId: '',
     boundCustomerId: '',
     list: [],
+    leftList: [],
+    rightList: [],
     page: 1,
     hasMore: true,
     loading: false,
     loadingMore: false,
   },
+
+  _leftH: 0,
+  _rightH: 0,
 
   async onLoad(q) {
     const groupId = q.groupId || '';
@@ -67,14 +91,23 @@ Page({
     return qs.join('&');
   },
 
+  applyList(list) {
+    const { leftList, rightList } = splitWaterfall(list, 0, 0);
+    this._leftH = 0;
+    this._rightH = 0;
+    this.setData({ list, leftList, rightList });
+  },
+
   async reload() {
-    this.setData({ loading: true, page: 1, hasMore: true, list: [] });
+    this.setData({ loading: true, page: 1, hasMore: true, list: [], leftList: [], rightList: [] });
+    this._leftH = 0;
+    this._rightH = 0;
     try {
       const res = await request({ url: `/api/products?${this.buildQs(1)}` });
       const items = ((res && res.items) || []).map(normalize);
       const total = (res && res.total) != null ? res.total : items.length;
+      this.applyList(items);
       this.setData({
-        list: items,
         page: 1,
         hasMore: items.length < total && items.length >= PAGE_SIZE,
         loading: false,
@@ -93,8 +126,31 @@ Page({
       const items = ((res && res.items) || []).map(normalize);
       const list = this.data.list.concat(items);
       const total = (res && res.total) != null ? res.total : list.length;
+      // 追加时在现有列高基础上继续分配
+      const leftList = this.data.leftList.slice();
+      const rightList = this.data.rightList.slice();
+      let lh = this._leftH || 0;
+      let rh = this._rightH || 0;
+      // 若尚未量到高度，用当前列长度近似
+      if (!lh && !rh) {
+        lh = leftList.length;
+        rh = rightList.length;
+      }
+      items.forEach((item) => {
+        if (lh <= rh) {
+          leftList.push(item);
+          lh += 1;
+        } else {
+          rightList.push(item);
+          rh += 1;
+        }
+      });
+      this._leftH = lh;
+      this._rightH = rh;
       this.setData({
         list,
+        leftList,
+        rightList,
         page: next,
         hasMore: list.length < total && items.length >= PAGE_SIZE,
         loadingMore: false,
@@ -102,6 +158,18 @@ Page({
     } catch (e) {
       this.setData({ loadingMore: false });
     }
+  },
+
+  onCoverLoad(e) {
+    const id = e.currentTarget.dataset.id;
+    const col = e.currentTarget.dataset.col;
+    const h = (e.detail && e.detail.height) || 0;
+    const w = (e.detail && e.detail.width) || 1;
+    if (!id || !h) return;
+    // 按列宽等比换算相对高度
+    const rel = h / w;
+    if (col === 'left') this._leftH = (this._leftH || 0) + rel;
+    else this._rightH = (this._rightH || 0) + rel;
   },
 
   goProduct(e) {

@@ -3,7 +3,16 @@ import { CustomerProductRuleRec, CustomerRec, FollowUpRec } from '../customer.ty
 export const CUSTOMERS_REPO = 'CUSTOMERS_REPO';
 
 export interface ICustomersRepository {
-  list(tenantId: string, opts?: { levelId?: string; q?: string }): Promise<CustomerRec[]>;
+  list(
+    tenantId: string,
+    opts?: {
+      levelId?: string;
+      q?: string;
+      page?: number;
+      pageSize?: number;
+      ids?: string[];
+    },
+  ): Promise<{ items: CustomerRec[]; total: number }>;
   findById(tenantId: string, id: string): Promise<CustomerRec | null>;
   findByOpenid(tenantId: string, openid: string): Promise<CustomerRec | null>;
   create(rec: Omit<CustomerRec, 'createdAt' | 'updatedAt'> & { createdAt?: Date; updatedAt?: Date }): Promise<CustomerRec>;

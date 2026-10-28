@@ -60,32 +60,86 @@ export class CustomersService {
     }
   }
 
-  async list(tenantId: string, opts?: { levelId?: string; q?: string }, authUser?: AuthContext) {
-    const rows = await this.repo.list(tenantId, opts);
-    if (!this.inquiries || !authUser || (authUser.role !== 'owner' && authUser.role !== 'staff')) {
-      return rows;
+  async list(
+    tenantId: string,
+    opts?: {
+      levelId?: string;
+      q?: string;
+      page?: number;
+      pageSize?: number;
+      /** pending = 仅待处理/未读询价客户 */
+      attention?: string;
+    },
+    authUser?: AuthContext,
+  ) {
+    const page = Math.max(1, Number(opts?.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(opts?.pageSize) || 20));
+    const attention = String(opts?.attention || '').trim();
+
+    let summaryById: Map<
+      string,
+      {
+        inquiryCount: number;
+        pendingInquiryCount: number;
+        unreadCount: number;
+        hasUnreadInquiry: boolean;
+        hasPendingInquiry: boolean;
+      }
+    > | null = null;
+    let attentionIds: string[] | undefined;
+
+    const wantSummary =
+      !!this.inquiries &&
+      !!authUser &&
+      (authUser.role === 'owner' || authUser.role === 'staff');
+
+    if (wantSummary) {
+      try {
+        const summary = await this.inquiries!.unreadSummary(authUser!);
+        summaryById = new Map(summary.customers.map((c) => [c.customerId, c]));
+        if (attention === 'pending') {
+          attentionIds = summary.customers
+            .filter((c) => c.hasPendingInquiry || c.hasUnreadInquiry)
+            .map((c) => c.customerId);
+          if (!attentionIds.length) return { items: [], total: 0, page, pageSize };
+        }
+      } catch {
+        summaryById = null;
+        if (attention === 'pending') return { items: [], total: 0, page, pageSize };
+      }
+    } else if (attention === 'pending') {
+      return { items: [], total: 0, page, pageSize };
     }
-    try {
-      const summary = await this.inquiries.unreadSummary(authUser);
-      const byId = new Map(summary.customers.map((c) => [c.customerId, c]));
-      return rows.map((c) => {
-        const st = byId.get(c.id);
-        const { openid: _oid, ...rest } = c;
-        return {
-          ...rest,
-          inquiryCount: st?.inquiryCount ?? 0,
-          pendingInquiryCount: st?.pendingInquiryCount ?? 0,
-          unreadInquiryCount: st?.unreadCount ?? 0,
-          hasUnreadInquiry: st?.hasUnreadInquiry ?? false,
-          hasPendingInquiry: st?.hasPendingInquiry ?? false,
-        };
-      });
-    } catch {
-      return rows.map((c) => {
-        const { openid: _oid, ...rest } = c;
-        return rest;
-      });
+
+    const { items: rows, total } = await this.repo.list(tenantId, {
+      levelId: opts?.levelId,
+      q: opts?.q,
+      page,
+      pageSize,
+      ids: attentionIds,
+    });
+
+    const strip = (c: (typeof rows)[number]) => {
+      const { openid: _oid, ...rest } = c;
+      return rest;
+    };
+
+    if (!summaryById) {
+      return { items: rows.map(strip), total, page, pageSize };
     }
+
+    const items = rows.map((c) => {
+      const st = summaryById!.get(c.id);
+      return {
+        ...strip(c),
+        inquiryCount: st?.inquiryCount ?? 0,
+        pendingInquiryCount: st?.pendingInquiryCount ?? 0,
+        unreadInquiryCount: st?.unreadCount ?? 0,
+        hasUnreadInquiry: st?.hasUnreadInquiry ?? false,
+        hasPendingInquiry: st?.hasPendingInquiry ?? false,
+      };
+    });
+    return { items, total, page, pageSize };
   }
 
   /** 本人更新昵称/头像/手机（按 openid ensureProfile；owner/staff 自测分享亦可写档案） */
