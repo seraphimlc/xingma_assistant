@@ -84,8 +84,7 @@ export class TypeOrmProductsRepository implements IProductsRepository {
     ).addOrderBy('p.created_at', 'DESC');
     const page = Math.max(1, query.page || 1);
     const pageSize = Math.min(100, Math.max(1, query.pageSize || 50));
-    const total = await qb.getCount();
-    const rows = await qb.skip((page - 1) * pageSize).take(pageSize).getMany();
+    const [rows, total] = await qb.skip((page - 1) * pageSize).take(pageSize).getManyAndCount();
     return { items: rows.map((r) => this.toRec(r)), total };
   }
 
@@ -192,6 +191,25 @@ export class TypeOrmProductsRepository implements IProductsRepository {
   async listSkus(tenantId: string, productId: string) {
     const rows = await this.skus.find({ where: { tenantId, productId } });
     return rows.filter((r) => r.status !== 'deleted').map((r) => this.toSku(r));
+  }
+
+  async listSkusByProductIds(tenantId: string, productIds: string[]) {
+    const out = new Map<string, ProductSkuRec[]>();
+    for (const id of productIds) out.set(id, []);
+    const ids = [...new Set(productIds.filter(Boolean))];
+    if (!ids.length) return out;
+    const rows = await this.skus
+      .createQueryBuilder('s')
+      .where('s.tenant_id = :tenantId', { tenantId })
+      .andWhere('s.product_id IN (:...ids)', { ids })
+      .andWhere("s.status <> 'deleted'")
+      .getMany();
+    for (const r of rows) {
+      const list = out.get(r.productId) || [];
+      list.push(this.toSku(r));
+      out.set(r.productId, list);
+    }
+    return out;
   }
 
   async findSku(tenantId: string, skuId: string) {

@@ -195,6 +195,20 @@ export class MemoryProductsRepository implements IProductsRepository {
     );
   }
 
+  async listSkusByProductIds(tenantId: string, productIds: string[]) {
+    const out = new Map<string, ProductSkuRec[]>();
+    for (const id of productIds) out.set(id, []);
+    const want = new Set(productIds.filter(Boolean));
+    if (!want.size) return out;
+    for (const s of this.skus.values()) {
+      if (s.tenantId !== tenantId || s.status === 'deleted' || !want.has(s.productId)) continue;
+      const list = out.get(s.productId) || [];
+      list.push({ ...s });
+      out.set(s.productId, list);
+    }
+    return out;
+  }
+
   async findSku(tenantId: string, skuId: string) {
     const s = this.skus.get(skuId);
     if (!s || s.tenantId !== tenantId) return null;

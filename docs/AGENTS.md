@@ -5,6 +5,7 @@
 ## 读序
 
 1. **[INDEX.md](./INDEX.md)** — 产品一句话、目录、怎么跑、概念、速查表  
+1b. **[HANDOFF.md](./HANDOFF.md)** — 交接：部署机、审计/batch/OCR、性能、缺口  
 2. **[PRD.md](./PRD.md)** — 需求与验收  
 3. **[TECH.md](./TECH.md)** — 表、API、时序、环境变量名、部署只动 `wool-api`  
 4. **再改代码** — 用 INDEX 速查表打开对应目录；对照 `backend/src/**/*.controller.ts` 与小程序 `pages/`  

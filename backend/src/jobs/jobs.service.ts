@@ -494,6 +494,25 @@ export class JobsService {
       );
       const seenJob = new Set(items.map((it) => String(it?.id || '').trim()).filter(Boolean));
       const out = items.slice();
+      // 一次批量拉取 orphan 关联的真实 job，避免 per-row findOne
+      const orphanJobIds = [
+        ...new Set(
+          rows
+            .map((r) => String(r?.jobId || '').trim())
+            .filter((id) => id && !seenJob.has(id)),
+        ),
+      ];
+      const orphanJobsById = new Map<string, any>();
+      if (orphanJobIds.length) {
+        try {
+          const jobRows = await this.jobs().find({
+            where: { tenantId: user.tenantId, id: In(orphanJobIds) as any },
+          });
+          for (const jr of jobRows) orphanJobsById.set(jr.id, jr);
+        } catch {
+          /* fall through synthetic */
+        }
+      }
       for (const row of rows) {
         if (!row?.id || seenSet.has(row.id)) continue;
         const jobId = String(row.jobId || '').trim();
@@ -504,9 +523,7 @@ export class JobsService {
         // 若仍有真实 job 但不在本页结果里，尽量挂上真实 job 行
         if (jobId) {
           try {
-            const jobRow = await this.jobs().findOne({
-              where: { id: jobId, tenantId: user.tenantId },
-            });
+            const jobRow = orphanJobsById.get(jobId);
             if (jobRow && this.canAccessJob(jobRow, user)) {
               const dto = this.toDto(jobRow);
               out.push(dto);
