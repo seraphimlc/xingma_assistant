@@ -233,12 +233,20 @@ export class InquiriesService {
 
   async list(
     user: AuthContext,
-    opts?: { productId?: string; customerId?: string; status?: string },
+    opts?: {
+      productId?: string;
+      customerId?: string;
+      status?: string;
+      page?: number;
+      pageSize?: number;
+    },
   ) {
     const onlyMine = user.role === 'customer';
     const productId = opts?.productId ? String(opts.productId) : '';
     let customerId = opts?.customerId ? String(opts.customerId) : '';
     const status = String(opts?.status || '').trim();
+    const page = Math.max(1, Number(opts?.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(opts?.pageSize) || 20));
     if (onlyMine) customerId = user.customerId || '-';
     if (user.role === 'customer' && opts?.customerId && opts.customerId !== user.customerId) {
       throw new ForbiddenException('无权查看他人询价');
@@ -253,7 +261,7 @@ export class InquiriesService {
       if (customerId) qb.andWhere('i.customer_id = :customerId', { customerId });
       if (productId) qb.andWhere('i.product_id = :productId', { productId });
       if (status) qb.andWhere('i.status = :status', { status });
-      const rows = await qb.getMany();
+      const [rows, total] = await qb.skip((page - 1) * pageSize).take(pageSize).getManyAndCount();
       const productIds = [...new Set(rows.map((r) => r.productId))];
       const nameMap = new Map<string, string>();
       if (productIds.length) {
@@ -268,9 +276,14 @@ export class InquiriesService {
           .getMany();
         for (const p of products) nameMap.set(p.id, p.name);
       }
-      return rows.map((r) => this.toRec(r, nameMap.get(r.productId) ?? null));
+      return {
+        items: rows.map((r) => this.toRec(r, nameMap.get(r.productId) ?? null)),
+        total,
+        page,
+        pageSize,
+      };
     }
-    return this.listStore
+    const filtered = this.listStore
       .filter((i) => {
         if (i.tenantId !== user.tenantId) return false;
         if (customerId && i.customerId !== customerId) return false;
@@ -278,7 +291,15 @@ export class InquiriesService {
         if (status && i.status !== status) return false;
         return true;
       })
-      .map((i) => ({ ...i, unread: i.staffReadAt == null }));
+      .sort((a, b) => Number(b.createdAt) - Number(a.createdAt));
+    const total = filtered.length;
+    const start = (page - 1) * pageSize;
+    return {
+      items: filtered.slice(start, start + pageSize).map((i) => ({ ...i, unread: i.staffReadAt == null })),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   async get(user: AuthContext, id: string) {

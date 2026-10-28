@@ -72,6 +72,14 @@ curl -s https://xingma.visitworld.me/api/health
 - 生产需：`tesseract-ocr` + `tesseract-ocr-chi-sim`（或 `TESSERACT_PATH`）
 - 失败：**不**编造 styleNo、**不**建假品；备注写进 ocrNote
 
+### 3.4a 列表分页 + 客户目录瀑布流（2026-10-28）
+
+- 商品列表 / 客户目录：已有 `page`/`pageSize`；任务：`limit`/`offset`
+- **新增**：客户列表、询价列表服务端分页，返回 `{ items, total, page, pageSize }`；客户 `attention=pending` 筛待处理
+- 小程序：客户 / 询价 / 任务 均 `onReachBottom` 加载更多
+- 客户目录 `pages/product/catalog`：**瀑布流双列**（`widthFix` + 左右列）
+- 未做服务端分页（体量小）：邀请/成员、商品分组、等级、promo templates
+
 ### 3.4 列表性能（2026-10-28）
 
 - 商品列表：SKU **批量** `listSkusByProductIds`（消灭 N 次 `listSkus`）；封面 URL 已 batch；列表响应**省略完整 skus**（保留 `priceText` / `colorCount`）

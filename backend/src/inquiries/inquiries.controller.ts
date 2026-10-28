@@ -35,8 +35,16 @@ export class InquiriesController {
     @Query('productId') productId?: string,
     @Query('customerId') customerId?: string,
     @Query('status') status?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
   ) {
-    return this.inquiriesService.list(user, { productId, customerId, status });
+    return this.inquiriesService.list(user, {
+      productId,
+      customerId,
+      status,
+      page: page ? parseInt(page, 10) : 1,
+      pageSize: pageSize ? parseInt(pageSize, 10) : 20,
+    });
   }
 
   /** 待沟通 → 我来沟通（记处理人，状态 in_progress） */

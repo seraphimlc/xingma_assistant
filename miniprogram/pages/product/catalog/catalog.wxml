@@ -4,27 +4,55 @@
     <view class="head-sub">可公开展示的款式</view>
   </view>
 
-  <view class="grid" wx:if="{{list.length}}">
-    <view
-      class="cat-card"
-      wx:for="{{list}}"
-      wx:key="id"
-      data-id="{{item.id}}"
-      bindtap="goProduct"
-    >
-      <view class="cover-wrap">
+  <view class="waterfall" wx:if="{{list.length}}">
+    <view class="wf-col">
+      <view
+        class="cat-card"
+        wx:for="{{leftList}}"
+        wx:key="id"
+        data-id="{{item.id}}"
+        bindtap="goProduct"
+      >
         <image
           wx:if="{{item.coverUrl}}"
           class="cover"
           src="{{item.coverUrl}}"
-          mode="aspectFill"
+          mode="widthFix"
           lazy-load
+          data-id="{{item.id}}"
+          data-col="left"
+          bindload="onCoverLoad"
         />
-        <view wx:else class="cover cover-ph">暂无图</view>
+        <view wx:else class="cover-ph">暂无图</view>
+        <view class="body">
+          <view class="style">{{item.styleNo ? '款号 ' + item.styleNo : '未填款号'}}</view>
+          <view class="price {{item.priceMuted ? 'muted' : ''}}">{{item.priceText || '询价'}}</view>
+        </view>
       </view>
-      <view class="body">
-        <view class="style">{{item.styleNo ? '款号 ' + item.styleNo : '未填款号'}}</view>
-        <view class="price {{item.priceMuted ? 'muted' : ''}}">{{item.priceText || '询价'}}</view>
+    </view>
+    <view class="wf-col">
+      <view
+        class="cat-card"
+        wx:for="{{rightList}}"
+        wx:key="id"
+        data-id="{{item.id}}"
+        bindtap="goProduct"
+      >
+        <image
+          wx:if="{{item.coverUrl}}"
+          class="cover"
+          src="{{item.coverUrl}}"
+          mode="widthFix"
+          lazy-load
+          data-id="{{item.id}}"
+          data-col="right"
+          bindload="onCoverLoad"
+        />
+        <view wx:else class="cover-ph">暂无图</view>
+        <view class="body">
+          <view class="style">{{item.styleNo ? '款号 ' + item.styleNo : '未填款号'}}</view>
+          <view class="price {{item.priceMuted ? 'muted' : ''}}">{{item.priceText || '询价'}}</view>
+        </view>
       </view>
     </view>
   </view>

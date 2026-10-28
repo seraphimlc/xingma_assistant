@@ -42,7 +42,10 @@ export class TypeOrmCustomersRepository implements ICustomersRepository {
     };
   }
 
-  async list(tenantId: string, opts?: { levelId?: string; q?: string }) {
+  async list(
+    tenantId: string,
+    opts?: { levelId?: string; q?: string; page?: number; pageSize?: number; ids?: string[] },
+  ) {
     const qb = this.customers.createQueryBuilder('c').where('c.tenant_id = :tenantId', { tenantId });
     // 列表：头像或昵称任一即可；两者皆无则不展示（不强制手机、不去重）
     qb.andWhere(
@@ -54,16 +57,22 @@ export class TypeOrmCustomersRepository implements ICustomersRepository {
         q: `%${opts.q}%`,
       });
     }
+    if (opts?.ids) {
+      if (!opts.ids.length) return { items: [], total: 0 };
+      qb.andWhere('c.id IN (:...ids)', { ids: opts.ids });
+    }
     qb.orderBy('c.created_at', 'DESC');
-    const rows = await qb.getMany();
-    if (!rows.length) return [];
+    const page = Math.max(1, Number(opts?.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(opts?.pageSize) || 20));
+    const [rows, total] = await qb.skip((page - 1) * pageSize).take(pageSize).getManyAndCount();
+    if (!rows.length) return { items: [], total };
     // Batch levels once — avoid N+1 findOne per customer
     const levelIds = [...new Set(rows.map((r) => r.levelId).filter(Boolean))];
     const levels = levelIds.length
       ? await this.levels.find({ where: { tenantId, id: In(levelIds) } })
       : [];
     const levelMap = new Map(levels.map((l) => [l.id, l]));
-    return rows.map((e) => {
+    const items = rows.map((e) => {
       const level = levelMap.get(e.levelId);
       return {
         id: e.id,
@@ -82,6 +91,7 @@ export class TypeOrmCustomersRepository implements ICustomersRepository {
         updatedAt: e.updatedAt,
       };
     });
+    return { items, total };
   }
 
   async findById(tenantId: string, id: string) {

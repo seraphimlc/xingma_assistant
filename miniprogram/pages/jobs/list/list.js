@@ -133,6 +133,10 @@ Page({
     list: [],
     total: 0,
     loading: true,
+    loadingMore: false,
+    offset: 0,
+    hasMore: true,
+    pageSize: 20,
     status: '',
     type: '',
     statusChips: [
@@ -154,7 +158,7 @@ Page({
   onShow() {
     try { publishQueue.resumeAll(); } catch (e) { /* */ }
     if (!ensureStaff()) return;
-    this.load();
+    this.reload();
   },
   onHide() {
     clearTimeout(this.timer);
@@ -163,37 +167,60 @@ Page({
     clearTimeout(this.timer);
   },
   onPullDownRefresh() {
-    this.load().finally(() => wx.stopPullDownRefresh());
+    this.reload().finally(() => wx.stopPullDownRefresh());
+  },
+  onReachBottom() {
+    if (!this.data.hasMore || this.data.loading || this.data.loadingMore) return;
+    this.loadMore();
   },
 
   onStatus(e) {
     this.setData({ status: e.currentTarget.dataset.id || '' });
-    this.load();
+    this.reload();
   },
   onType(e) {
     this.setData({ type: e.currentTarget.dataset.id || '' });
-    this.load();
+    this.reload();
   },
 
-  async load() {
+  reload() {
+    this.setData({ offset: 0, hasMore: true, list: [] });
+    return this.fetchPage(0, false);
+  },
+  loadMore() {
+    return this.fetchPage(this.data.offset + this.data.pageSize, true);
+  },
+
+  async fetchPage(offset, append) {
     clearTimeout(this.timer);
-    this.setData({ loading: true });
+    if (append) this.setData({ loadingMore: true });
+    else this.setData({ loading: true });
     try {
-      const qs = ['limit=50'];
+      const limit = this.data.pageSize || 20;
+      const qs = [`limit=${limit}`, `offset=${offset}`];
       if (this.data.status) qs.push(`status=${this.data.status}`);
       if (this.data.type) qs.push(`type=${this.data.type}`);
       const res = await request({ url: `/api/jobs?${qs.join('&')}` });
-      // 仅 user-facing（promo_image/promo_video）；「全部」含排队/在做/失败/最近完成，不藏 succeeded
-      // 系统 job（发品/分析图等）由后端 + 前端白名单共同隐藏
+      // 仅 user-facing；系统 job 由后端 + 前端白名单共同隐藏
       const raw = (res.items || []).filter((j) => isUserVisibleJobType(j.type));
       const items = raw.map(enrich);
-      this.setData({ list: items, total: res.total || items.length, loading: false });
-      const busy = items.some((j) => j.status === 'queued' || j.status === 'running');
-      if (busy) {
-        this.timer = setTimeout(() => this.load(), 3000);
+      const list = append ? this.data.list.concat(items) : items;
+      const hasMore = items.length >= limit;
+      this.setData({
+        list,
+        total: list.length,
+        offset,
+        hasMore,
+        loading: false,
+        loadingMore: false,
+      });
+      const busy = list.some((j) => j.status === 'queued' || j.status === 'running');
+      if (busy && !append) {
+        // 刷新首屏轮询；加载更多时不重置整表
+        this.timer = setTimeout(() => this.reload(), 3000);
       }
     } catch (e) {
-      this.setData({ loading: false });
+      this.setData({ loading: false, loadingMore: false });
       wx.showToast({ title: e.message || '加载失败', icon: 'none' });
     }
   },
@@ -204,7 +231,7 @@ Page({
     try {
       await request({ url: `/api/jobs/${id}/retry`, method: 'POST', data: {} });
       wx.showToast({ title: row.retryLabel === '重新生成' ? '已开始重新生成' : '已重新排队', icon: 'none' });
-      this.load();
+      this.reload();
     } catch (err) {
       wx.showToast({ title: err.message || '重试失败', icon: 'none' });
     }
@@ -225,7 +252,7 @@ Page({
     try {
       await request({ url: `/api/jobs/${id}/cancel`, method: 'POST', data: {} });
       wx.showToast({ title: '已' + verb, icon: 'none' });
-      this.load();
+      this.reload();
     } catch (err) {
       wx.showToast({ title: err.message || verb + '失败', icon: 'none' });
     }

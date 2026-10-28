@@ -10,7 +10,10 @@ export class MemoryCustomersRepository implements ICustomersRepository {
   private readonly followUps = new Map<string, FollowUpRec>();
   private readonly rules = new Map<string, CustomerProductRuleRec>();
 
-  async list(tenantId: string, opts?: { levelId?: string; q?: string }) {
+  async list(
+    tenantId: string,
+    opts?: { levelId?: string; q?: string; page?: number; pageSize?: number; ids?: string[] },
+  ) {
     let items = [...this.byId.values()].filter((c) => c.tenantId === tenantId);
     // 列表：头像或昵称任一即可；两者皆无则不展示（不强制手机、不去重）
     items = items.filter(
@@ -26,7 +29,16 @@ export class MemoryCustomersRepository implements ICustomersRepository {
           (c.phone || '').includes(q),
       );
     }
-    return items.map((c) => ({ ...c }));
+    if (opts?.ids) {
+      const allow = new Set(opts.ids);
+      items = items.filter((c) => allow.has(c.id));
+    }
+    items.sort((a, b) => Number(b.createdAt) - Number(a.createdAt));
+    const total = items.length;
+    const page = Math.max(1, Number(opts?.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(opts?.pageSize) || 20));
+    const start = (page - 1) * pageSize;
+    return { items: items.slice(start, start + pageSize).map((c) => ({ ...c })), total };
   }
 
   async findById(tenantId: string, id: string) {

@@ -1,1 +1,5 @@
-{ "navigationBarTitleText": "询价列表" }
+{
+  "navigationBarTitleText": "询价列表",
+  "enablePullDownRefresh": true,
+  "onReachBottomDistance": 80
+}
