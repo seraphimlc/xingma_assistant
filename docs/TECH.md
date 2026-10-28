@@ -336,6 +336,11 @@ batch：内存 Map，TTL≈2h；主路径可不停留在确认页。
 
 ## 7. 部署注意（只动 wool-api）
 
+### 发品批次持久化 / 吊牌 OCR（2026-10-28）
+- 发品 batch 落盘 `backend/storage/tenants/{tenantId}/uploads/{batchId}/_batch.json`（TTL≈2h），**pm2 restart 后仍可取**；真过期仍返回「发品批次不存在或已过期」。
+- 吊牌 OCR：多模态超时会标注「OCR 超时」；本地兜底依赖 `tesseract`（`chi_sim`）。生产需安装 `tesseract-ocr` + `tesseract-ocr-chi-sim`。失败**不**编造 styleNo、**不**建假品。
+
+
 服务器目录：`/srv/wool-stall-miniapp`。同机可能跑**多个** pm2 应用。
 
 **规则**：更新本项目后端时：

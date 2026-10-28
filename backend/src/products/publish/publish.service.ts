@@ -21,6 +21,7 @@ import {
   PublishBatch,
   PublishBatchAsset,
 } from './publish.types';
+import { PublishBatchStore } from './publish-batch.store';
 import { JobsService } from '../../jobs/jobs.service';
 import { buildJobDisplayTitle } from '../../jobs/job-display-title';
 import { VisionClient } from '../../vision/vision.client';
@@ -30,11 +31,9 @@ import { provisionalStyleNo } from '../../vision/publish-vision';
 import { LevelsService } from '../../levels/levels.service';
 import { ProductGroupsService } from '../product-groups.service';
 
-const BATCH_TTL_MS = 2 * 60 * 60 * 1000; // 2h
-
 @Injectable()
 export class PublishService implements OnModuleInit {
-  private readonly batches = new Map<string, PublishBatch>();
+  private readonly batchStore = new PublishBatchStore(() => this.storageRoot());
   private readonly logger = new Logger('Publish');
 
   constructor(
@@ -60,18 +59,16 @@ export class PublishService implements OnModuleInit {
     return this.oss.publicUrl(objectKey);
   }
 
-  private purgeExpired() {
-    const now = Date.now();
-    for (const [id, b] of this.batches) {
-      if (now - b.createdAt > BATCH_TTL_MS) this.batches.delete(id);
-    }
+  getBatch(tenantId: string, batchId: string): PublishBatch {
+    this.batchStore.purgeExpiredMemory();
+    const b = this.batchStore.get(tenantId, batchId);
+    if (!b) throw new NotFoundException('发品批次不存在或已过期');
+    return b;
   }
 
-  getBatch(tenantId: string, batchId: string): PublishBatch {
-    this.purgeExpired();
-    const b = this.batches.get(batchId);
-    if (!b || b.tenantId !== tenantId) throw new NotFoundException('发品批次不存在或已过期');
-    return b;
+  /** 变更 assets/suggestion 后落盘，保证重启可恢复 */
+  private persistBatch(batch: PublishBatch) {
+    this.batchStore.save(batch);
   }
 
   /**
@@ -83,7 +80,6 @@ export class PublishService implements OnModuleInit {
     existingBatchId?: string,
   ) {
     if (!files?.length) throw new BadRequestException('请至少上传一张图片');
-    this.purgeExpired();
 
     let batch: PublishBatch;
     if (existingBatchId) {
@@ -95,7 +91,7 @@ export class PublishService implements OnModuleInit {
         createdAt: Date.now(),
         assets: [],
       };
-      this.batches.set(batch.batchId, batch);
+      this.persistBatch(batch);
     }
 
     const uploadDir = path.join(
@@ -137,6 +133,7 @@ export class PublishService implements OnModuleInit {
     }
     batch.assets.push(...added);
     batch.suggestion = undefined;
+    this.persistBatch(batch);
 
     return {
       batchId: batch.batchId,
@@ -204,7 +201,6 @@ export class PublishService implements OnModuleInit {
       }
     }
 
-    this.purgeExpired();
     let batch: PublishBatch;
     if (body?.batchId) {
       batch = this.getBatch(user.tenantId, body.batchId);
@@ -215,7 +211,7 @@ export class PublishService implements OnModuleInit {
         createdAt: Date.now(),
         assets: [],
       };
-      this.batches.set(batch.batchId, batch);
+      this.persistBatch(batch);
     }
 
     const uploadDir = path.join(
@@ -268,6 +264,7 @@ export class PublishService implements OnModuleInit {
     }
     batch.assets.push(...added);
     batch.suggestion = undefined;
+    this.persistBatch(batch);
 
     if (!batch.assets.length) throw new BadRequestException('批次内无图片');
 
@@ -546,6 +543,7 @@ export class PublishService implements OnModuleInit {
       };
     }
     batch.suggestion = suggestion;
+    this.persistBatch(batch);
     const colorSummary = (suggestion.colors || []).slice(0, 8).join('/') || '-';
     this.logger.log(
       `analyze batchId=${batchId} ocr=${suggestion.ocrUsed} via=${String(suggestion.ocrNote || '').slice(0, 80)} ` +
@@ -664,7 +662,7 @@ export class PublishService implements OnModuleInit {
       await this.updateMediaAsset(user.tenantId, mid, { productId });
     }
 
-    this.batches.delete(batch.batchId);
+    this.batchStore.delete(batch.tenantId, batch.batchId);
     this.logger.log(
       `updateFromPublishJob productId=${productId} batchId=${input.batchId} ` +
         `status=${input.status} needReview=${!!input.needReview} reasons=${(input.reviewReasons || []).join(',') || '-'}`,
@@ -723,6 +721,7 @@ export class PublishService implements OnModuleInit {
       asset.localPath = destPath;
       coverMediaIds.push(asset.mediaId);
     }
+    this.persistBatch(batch);
     return coverMediaIds;
   }
 
@@ -845,7 +844,7 @@ export class PublishService implements OnModuleInit {
       await this.updateMediaAsset(user.tenantId, mid, { productId: product.id });
     }
 
-    this.batches.delete(batch.batchId);
+    this.batchStore.delete(batch.tenantId, batch.batchId);
     return product;
   }
 
