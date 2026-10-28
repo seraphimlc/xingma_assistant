@@ -15,18 +15,26 @@
 
 ### 部署（只动 wool-api）
 
+生产目录**无 git**（历史用 rsync）。本机改完合入 `main` 后：
+
 ```bash
-ssh store-old   # 或等价 HostName 8.216.43.224
-cd /srv/wool-stall-miniapp
-git fetch origin && git checkout main && git pull --ff-only origin main
-cd backend
-# 新迁移：按序 mysql < migrations/0xx_*.sql（已执行的 Duplicate 可忽略）
-npm ci && npm run build
-pm2 restart wool-api
+# 本机（仓库根）
+SHA=$(git rev-parse --short HEAD)
+rsync -az --delete ./backend/src/ store-old:/srv/wool-stall-miniapp/backend/src/
+rsync -az ./backend/migrations/ store-old:/srv/wool-stall-miniapp/backend/migrations/
+rsync -az --delete ./docs/ store-old:/srv/wool-stall-miniapp/docs/
+# 服务器
+ssh store-old
+cd /srv/wool-stall-miniapp/backend
+# 新迁移：mysql … < migrations/0xx_*.sql（Duplicate key name 可忽略）
+npm run build          # 一般不必 npm ci，除非 package-lock 变了
+pm2 restart wool-api   # 禁止 pm2 restart all
 curl -s https://xingma.visitworld.me/api/health
 ```
 
-`.env` / `backend/.secrets/` **保留在服务器**，切勿用空模板覆盖。
+备份习惯：部署前把 `backend/src`（及需要时的 migrations/docs）拷到 `.deploy-bak/YYYYMMDD_HHMMSS_<sha>/`。
+
+`.env` / `backend/.secrets/` / `storage/` **保留在服务器**，rsync 不要覆盖。
 
 ## 2. 文档入口
 
