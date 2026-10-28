@@ -9,11 +9,14 @@ import { DataSource } from 'typeorm';
 import { ProductGroup } from '../common/entities/product-group.entity';
 import { Product } from '../common/entities/product.entity';
 import { AuthContext } from '../common/interfaces/auth-context.interface';
+import { AuditService } from '../common/audit.service';
 import { newId } from '../common/utils/id';
 
 @Injectable()
 export class ProductGroupsService {
-  constructor(@Optional() private readonly dataSource?: DataSource) {}
+  constructor(    private readonly audit: AuditService,
+@Optional() private readonly dataSource?: DataSource,
+  ) {}
 
   private assertStaff(user: AuthContext) {
     if (user.role !== 'owner' && user.role !== 'staff') {
@@ -165,6 +168,14 @@ export class ProductGroupsService {
         status: 'active',
       }),
     );
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'product_group.create',
+      targetType: 'product_group',
+      targetId: row.id,
+      detail: { name: row.name, code: row.code, isLatest: !!row.isLatest },
+    });
     return this.toDto(row);
   }
 
@@ -201,6 +212,14 @@ export class ProductGroupsService {
     }
 
     await repo.save(g);
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'product_group.update',
+      targetType: 'product_group',
+      targetId: groupId,
+      detail: { fields: Object.keys(body || {}) },
+    });
     return this.toDto(g);
   }
 
@@ -217,6 +236,14 @@ export class ProductGroupsService {
     );
     g.isLatest = true;
     await repo.save(g);
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'product_group.set_latest',
+      targetType: 'product_group',
+      targetId: groupId,
+      detail: {},
+    });
     return { id: g.id, isLatest: true };
   }
 
@@ -262,6 +289,14 @@ export class ProductGroupsService {
       }
     }
 
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'product_group.archive',
+      targetType: 'product_group',
+      targetId: groupId,
+      detail: { wasLatest },
+    });
     return { id: g.id, status: 'archived' };
   }
 
@@ -281,6 +316,14 @@ export class ProductGroupsService {
     if (!p) throw new NotFoundException('商品不存在');
     p.groupId = groupId;
     await prodRepo.save(p);
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'product_group.move_product',
+      targetType: 'product',
+      targetId: productId,
+      detail: { groupId, groupName: g.name },
+    });
     return { productId, groupId, groupName: g.name };
   }
 }

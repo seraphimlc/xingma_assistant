@@ -31,6 +31,7 @@ import { OssClient } from '../media/oss.client';
 import { parseNoteText } from './publish/parse-note';
 import { ProductGroupsService } from './product-groups.service';
 import { TenantsService } from '../tenants/tenants.service';
+import { AuditService } from '../common/audit.service';
 
 @Injectable()
 export class ProductsService {
@@ -43,6 +44,7 @@ export class ProductsService {
     private readonly oss: OssClient,
     private readonly groups: ProductGroupsService,
     private readonly tenants: TenantsService,
+    private readonly audit: AuditService,
     @Optional() private readonly dataSource?: DataSource,
   ) {}
 
@@ -165,6 +167,16 @@ export class ProductsService {
     if (!updated) throw new NotFoundException('商品不存在');
     const skus = await this.repo.listSkus(user.tenantId, productId);
     const dto = await this.withImages(user.tenantId, updated, this.toStaffDto(updated, skus));
+    if (appended.length) {
+      this.audit.enqueue({
+        tenantId: user.tenantId,
+        actor: user,
+        action: 'product.cover.append',
+        targetType: 'product',
+        targetId: productId,
+        detail: { appended, skipped, appendedCount: appended.length },
+      });
+    }
     return {
       ...dto,
       coverMediaIds: updated.coverMediaIds || existing,
@@ -580,6 +592,14 @@ export class ProductsService {
       }
     }
     const created = await this.repo.create(user.tenantId, { ...input, groupId: groupId || null });
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'product.create',
+      targetType: 'product',
+      targetId: created.id,
+      detail: { styleNo: created.styleNo, name: created.name, status: created.status, groupId: created.groupId || null },
+    });
     const skus = await this.repo.listSkus(user.tenantId, created.id);
     return this.toStaffDto(created, skus);
   }
@@ -611,6 +631,14 @@ export class ProductsService {
     }
     const updated = await this.repo.update(user.tenantId, id, input);
     if (!updated) throw new NotFoundException('商品不存在');
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'product.update',
+      targetType: 'product',
+      targetId: id,
+      detail: { fields: Object.keys(input || {}) },
+    });
     const skus = await this.repo.listSkus(user.tenantId, id);
     return this.withImages(user.tenantId, updated, this.toStaffDto(updated, skus));
   }
@@ -679,6 +707,14 @@ export class ProductsService {
         await this.repo.removeSku(user.tenantId, s.id);
       }
     }
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'product.sku.replace_colors',
+      targetType: 'product',
+      targetId: productId,
+      detail: { colors: kept.map((k) => k.color), count: kept.length },
+    });
     return kept;
   }
 
@@ -687,6 +723,14 @@ export class ProductsService {
     this.assertStaff(user);
     const updated = await this.repo.softOffSale(user.tenantId, id);
     if (!updated) throw new NotFoundException('商品不存在');
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'product.off_sale',
+      targetType: 'product',
+      targetId: id,
+      detail: { status: updated.status, via: 'remove' },
+    });
     return { ok: true, id, status: updated.status };
   }
 
@@ -697,6 +741,14 @@ export class ProductsService {
       throw new BadRequestException('status 仅支持 on_sale / off_sale');
     }
     const n = await this.repo.batchSetStatus(user.tenantId, ids, status);
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: status === 'on_sale' ? 'product.batch_on_sale' : 'product.batch_off_sale',
+      targetType: 'product',
+      targetId: ids[0] || null,
+      detail: { ids, affected: n, status },
+    });
     return { ok: true, affected: n, status };
   }
 
@@ -709,6 +761,14 @@ export class ProductsService {
     if (clash) throw new ConflictException('目标款号已存在');
     const copied = await this.repo.copy(user.tenantId, id, newStyleNo);
     if (!copied) throw new NotFoundException('复制失败');
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'product.copy',
+      targetType: 'product',
+      targetId: copied.id,
+      detail: { fromId: id, styleNo: copied.styleNo },
+    });
     const skus = await this.repo.listSkus(user.tenantId, copied.id);
     return this.toStaffDto(copied, skus);
   }
@@ -725,7 +785,16 @@ export class ProductsService {
     if (existing.some((s) => s.skuCode === code)) {
       throw new ConflictException('SKU 编码已存在');
     }
-    return this.repo.addSku(user.tenantId, productId, { ...input, skuCode: code });
+    const sku = await this.repo.addSku(user.tenantId, productId, { ...input, skuCode: code });
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'product.sku.create',
+      targetType: 'product_sku',
+      targetId: sku.id,
+      detail: { productId, skuCode: sku.skuCode, color: sku.color },
+    });
+    return sku;
   }
 
   async updateSku(user: AuthContext, productId: string, skuId: string, input: Partial<CreateSkuInput>) {
@@ -740,6 +809,14 @@ export class ProductsService {
     }
     const updated = await this.repo.updateSku(user.tenantId, skuId, input);
     if (!updated) throw new NotFoundException('SKU 不存在');
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'product.sku.update',
+      targetType: 'product_sku',
+      targetId: skuId,
+      detail: { productId, fields: Object.keys(input || {}) },
+    });
     return updated;
   }
 
@@ -748,6 +825,14 @@ export class ProductsService {
     const sku = await this.repo.findSku(user.tenantId, skuId);
     if (!sku || sku.productId !== productId) throw new NotFoundException('SKU 不存在');
     await this.repo.removeSku(user.tenantId, skuId);
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'product.sku.delete',
+      targetType: 'product_sku',
+      targetId: skuId,
+      detail: { productId },
+    });
     return { ok: true };
   }
 
@@ -793,6 +878,14 @@ export class ProductsService {
     }
     const coverMediaIds = [...(p.coverMediaIds || []), ...addedIds];
     const updated = await this.repo.update(user.tenantId, productId, { coverMediaIds });
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'product.image.add',
+      targetType: 'product',
+      targetId: productId,
+      detail: { mediaIds: addedIds, count: addedIds.length },
+    });
     const skus = await this.repo.listSkus(user.tenantId, productId);
     return this.withImages(user.tenantId, updated!, this.toStaffDto(updated!, skus));
   }
@@ -815,6 +908,14 @@ export class ProductsService {
     }
     const coverMediaIds = (p.coverMediaIds || []).filter((id) => id !== mediaId);
     const updated = await this.repo.update(user.tenantId, productId, { coverMediaIds });
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'product.image.remove',
+      targetType: 'media_asset',
+      targetId: mediaId,
+      detail: { productId },
+    });
     const skus = await this.repo.listSkus(user.tenantId, productId);
     return this.withImages(user.tenantId, updated!, this.toStaffDto(updated!, skus));
   }

@@ -5,6 +5,7 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { createHash } from 'crypto';
 import { AuthContext } from '../common/interfaces/auth-context.interface';
+import { AuditService } from '../common/audit.service';
 import { MediaAsset } from '../common/entities/media-asset.entity';
 import { PromoSetEntity, PromoSetImage, ImageGenCallRecord, OutfitCompareRecord } from '../common/entities/promo-set.entity';
 import { newId } from '../common/utils/id';
@@ -136,6 +137,7 @@ export class PromoService implements OnModuleInit {
     private readonly oss: OssClient,
     private readonly media: MediaService,
     private readonly externalOutfit: ExternalOutfitClient,
+    private readonly audit: AuditService,
     @Optional() private readonly vision?: VisionClient,
     @Optional() private readonly dataSource?: DataSource,
   ) {}
@@ -504,6 +506,14 @@ export class PromoService implements OnModuleInit {
       path.join(this.stateDir(user.tenantId, productId), 'feature.json'),
       JSON.stringify({ feature, updatedAt: Date.now() }),
     );
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'promo.feature.update',
+      targetType: 'product',
+      targetId: productId,
+      detail: { featureLen: feature.length },
+    });
     return { feature, source: 'saved' };
   }
 
@@ -773,6 +783,14 @@ export class PromoService implements OnModuleInit {
       this.logger.warn(`init promo progress: ${e?.message || e}`);
     }
 
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'promo.generate',
+      targetType: 'promo_set',
+      targetId: setId,
+      detail: { productId, jobId: job.id, templateId: tpl.id, mediaKind: 'image' },
+    });
     return {
       id: job.id,
       jobId: job.id,
@@ -1003,6 +1021,14 @@ export class PromoService implements OnModuleInit {
     }
     await repo.update({ id: setId, tenantId: user.tenantId }, { jobId: job.id });
 
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'promo.generate',
+      targetType: 'promo_set',
+      targetId: setId,
+      detail: { productId, jobId: job.id, templateId: tpl.id, mediaKind: 'video' },
+    });
     return {
       id: job.id,
       jobId: job.id,
@@ -1523,6 +1549,14 @@ export class PromoService implements OnModuleInit {
 
   /** 整组重生成：沿用 params，复用同组 job */
   async regenerateSet(user: AuthContext, productId: string, setId: string) {
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'promo_set.regenerate',
+      targetType: 'promo_set',
+      targetId: setId,
+      detail: { productId, scope: 'set' },
+    });
     const set = await this.getSetEntity(user, productId, setId);
     const p = (set.params || {}) as unknown as GenerateInput;
     const templateId = String(p.templateId || set.templateId || '').trim();
@@ -1548,6 +1582,14 @@ export class PromoService implements OnModuleInit {
 
   /** 批量局部重生成：一次请求、一个 job、同一 set */
   async regenerateImages(user: AuthContext, productId: string, setId: string, indexes: number[]) {
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'promo_set.regenerate',
+      targetType: 'promo_set',
+      targetId: setId,
+      detail: { productId, scope: 'images', indexes },
+    });
     const set = await this.getSetEntity(user, productId, setId);
     const p = (set.params || {}) as unknown as GenerateInput;
     const templateId = String(p.templateId || set.templateId || '').trim();
@@ -3205,6 +3247,14 @@ export class PromoService implements OnModuleInit {
     }
     row.status = 'deleted';
     await this.setsRepo().save(row);
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'promo_set.delete',
+      targetType: 'promo_set',
+      targetId: setId,
+      detail: { productId, mediaRemoved: mediaIds.length },
+    });
     return { deleted: setId, mediaRemoved: mediaIds.length };
   }
 
@@ -3319,6 +3369,14 @@ export class PromoService implements OnModuleInit {
       added.push(saved.id);
     }
     this.saveJob(job);
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'promo.save_to_product',
+      targetType: 'promo_job',
+      targetId: jobId,
+      detail: { productId, addedCount: added.length, mediaIds: added },
+    });
     return { added, job: this.jobDto(job), mixedIntoProductImages: false };
   }
 }

@@ -1,6 +1,6 @@
 import { Entity, Column, Index, PrimaryGeneratedColumn, CreateDateColumn } from 'typeorm';
 
-/** 关键写操作审计：谁、何时、做了什么 */
+/** 管理写操作审计：谁、何时、对何实体、做了什么（append-only） */
 @Entity('audit_logs')
 export class AuditLog {
   @PrimaryGeneratedColumn('uuid')
@@ -19,10 +19,15 @@ export class AuditLog {
   @Column({ type: 'varchar', length: 16, nullable: true, name: 'actor_role' })
   actorRole!: string | null;
 
+  /** 操作人昵称快照（写入时落库，后续改昵称不影响历史） */
+  @Column({ type: 'varchar', length: 64, nullable: true, name: 'actor_nickname' })
+  actorNickname!: string | null;
+
   @Index()
   @Column({ type: 'varchar', length: 64 })
   action!: string;
 
+  /** 实体类型：product | media_asset | promo_set | customer | member | … */
   @Column({ type: 'varchar', length: 64, nullable: true, name: 'target_type' })
   targetType!: string | null;
 

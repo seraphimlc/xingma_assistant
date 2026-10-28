@@ -12,6 +12,7 @@ import { Inquiry } from '../common/entities/inquiry.entity';
 import { Product } from '../common/entities/product.entity';
 import { TenantMember } from '../common/entities/tenant-member.entity';
 import { AuthContext } from '../common/interfaces/auth-context.interface';
+import { AuditService } from '../common/audit.service';
 import { CustomersService } from '../customers/customers.service';
 
 export interface InquiryRec {
@@ -70,6 +71,7 @@ export class InquiriesService {
   constructor(
     @Inject(forwardRef(() => CustomersService))
     private readonly customers: CustomersService,
+    private readonly audit: AuditService,
     @Optional() private readonly ds?: DataSource,
   ) {}
 
@@ -188,6 +190,14 @@ export class InquiriesService {
           handledNote: null,
         }),
       );
+      this.audit.enqueue({
+        tenantId: user.tenantId,
+        actor: user,
+        action: 'inquiry.create',
+        targetType: 'inquiry',
+        targetId: saved.id,
+        detail: { productId: body.productId, customerId, hasPhone: !!phone },
+      });
       return this.toRec(saved);
     }
     const rec: InquiryRec = {
@@ -210,6 +220,14 @@ export class InquiriesService {
       createdAt: new Date(),
     };
     this.listStore.push(rec);
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'inquiry.create',
+      targetType: 'inquiry',
+      targetId: rec.id,
+      detail: { productId: body.productId, customerId, hasPhone: !!phone },
+    });
     return rec;
   }
 
@@ -405,6 +423,14 @@ export class InquiriesService {
       this.applyHandler(e, handler);
       if (!e.staffReadAt) e.staffReadAt = now;
       const saved = await repo.save(e);
+      this.audit.enqueue({
+        tenantId: user.tenantId,
+        actor: user,
+        action: 'inquiry.claim',
+        targetType: 'inquiry',
+        targetId: saved.id,
+        detail: { status: saved.status, assigneeMemberId: saved.assigneeMemberId },
+      });
       let productName: string | null = null;
       const p = await this.db.getRepository(Product).findOne({
         where: { id: saved.productId, tenantId: user.tenantId },
@@ -460,6 +486,14 @@ export class InquiriesService {
       e.handledNote = note;
       e.staffReadAt = now;
       const saved = await repo.save(e);
+      this.audit.enqueue({
+        tenantId: user.tenantId,
+        actor: user,
+        action: 'inquiry.handled',
+        targetType: 'inquiry',
+        targetId: saved.id,
+        detail: { status: saved.status, hasNote: !!note },
+      });
       let productName: string | null = null;
       const p = await this.db.getRepository(Product).findOne({
         where: { id: saved.productId, tenantId: user.tenantId },

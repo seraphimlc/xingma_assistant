@@ -52,6 +52,7 @@ NestJS API (:3000，生产 Nginx → https://xingma.visitworld.me/api/*)
 | `012_inquiry_contact.sql` | 询价 phone / contact_name / remark |
 | `013_inquiry_staff_read.sql` | staff_read_at / handled_note |
 | `014_audit_logs_and_soft_delete.sql` | audit_logs + 软删 |
+| `018_audit_actor_nickname.sql` | audit_logs.actor_nickname + actor 索引 |
 | `015_media_asset_meta.sql` | media_assets.meta、products.ref_analysis |
 | `016_member_invite_source.sql` | tenant_members.invite_id / invite_code |
 | `017_inquiry_handler.sql` | 询价处理人 assignee_openid / assignee_name |
@@ -333,6 +334,12 @@ batch：内存 Map，TTL≈2h；主路径可不停留在确认页。
 
 - **task（业主）**：一次生图/生视频/发品动作；生图·视频对应一个 `promo_sets`（槽位在创建时固定，重生只换槽内图）。
 - **job（框架）**：调度执行单元（整组生成、单槽重生、发品等）；`/api/jobs` 仍供调试；任务中心 / 本商品任务默认按 set 呈现，成功素材只在「宣传素材」。
+
+## 6.x 审计日志（append-only，仅记录）
+
+表 `audit_logs`：谁（`actor_member_id` / `actor_openid` / `actor_role` / `actor_nickname` 快照）对何实体（`target_type`+`target_id`）做了何操作（`action`），`detail_json` 含 payload/diff 与 `actorSnapshot`。系统/任务写操作用 `actor_role=system|job`，`detail.jobId` 可关联，**不伪造真人**。无分析 UI——给 agent 查库用。
+
+覆盖（going-forward）：商品/SKU/封面图、分组、宣传素材 generate/regen/delete、发品 confirm/draft/discard、客户等级与规则/跟进、询价、分享、邀请/成员资料、租户设置、job 终态。
 
 ## 7. 部署注意（只动 wool-api）
 
