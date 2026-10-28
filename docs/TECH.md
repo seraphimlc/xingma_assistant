@@ -367,10 +367,10 @@ batch：内存 Map，TTL≈2h；主路径可不停留在确认页。
 
 **规则**：更新本项目后端时：
 
-1. 同步/拉取 `backend` 代码与依赖  
-2. `npm ci && npm run build`（在 backend 目录）  
+1. 本机 `main` 合入后 **rsync** `backend/src` + `migrations` + `docs` 到 `/srv/wool-stall-miniapp`（生产目录无 git）  
+2. 服务器 `backend` 目录：`npm run build`（lock 变更时再 `npm ci`）  
 3. **仅** `pm2 restart wool-api`（或等价只重启该 name）  
-4. **不要** `pm2 restart all`，不要动其他项目进程与 Nginx 无关 server  
+4. **不要** `pm2 restart all`，不要动其他项目进程与 Nginx 无关 server；勿覆盖 `.env` / `.secrets` / `storage`  
 
 文档可单独同步到 `/srv/wool-stall-miniapp/docs/`，**无需**重启进程。
 
