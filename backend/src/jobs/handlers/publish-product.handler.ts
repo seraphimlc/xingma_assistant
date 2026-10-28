@@ -27,6 +27,7 @@ const REASON_ZH: Record<string, string> = {
   not_garment_material: '图片不是服装类资料',
   missing_style_no: '未识别到吊牌款号',
   hangtag_unclear: '吊牌文字不清晰',
+  ocr_timeout: '吊牌 OCR 超时',
   weak_title: '无法确认商品名称',
   color_placeholder: '未识别到颜色',
   title_fallback: '标题不可靠',
@@ -50,6 +51,9 @@ function humanPublishFailureReason(opts: {
   }
   if (/不是服装|非服装|不成衣|非成衣|不是衣服|非针织|非毛衫|非服装类资料/.test(blob)) {
     return '图片不是服装类资料';
+  }
+  if (/OCR 超时|aborted|AbortError|ETIMEDOUT/i.test(blob)) {
+    return '吊牌 OCR 超时';
   }
   if (/吊牌.*(不清|模糊|无法|看不清)|看不清.*吊牌|无吊牌/.test(blob)) {
     return '吊牌文字不清晰';
@@ -410,11 +414,18 @@ export function registerPublishProductHandler(
         .join('\n');
       const noteBlob = `${suggestion.ocrNote || ''} ${hangtagOcr} ${subtitle || ''}`;
       // 仅当 OCR/备注明确指向模糊/看不清时才报「吊牌文字不清晰」；
-      // 吊牌清晰但超时/空响应导致无款号 → 用「未识别到吊牌款号」，避免误伤
+      // 超时 abort → 「吊牌 OCR 超时」；其余无款号 → 「未识别到吊牌款号」。永不编造 styleNo。
+      const ocrTimedOut =
+        hasHangtagImg &&
+        /OCR 超时|aborted|AbortError|ETIMEDOUT|timed?\s*out/i.test(noteBlob);
       const unclearHangtag =
         hasHangtagImg &&
+        !ocrTimedOut &&
         (/吊牌.*(不清|模糊|无法辨认|看不清)|看不清.*吊牌|文字模糊|字迹不清/.test(noteBlob) ||
           (/多模态 OCR 无有效文字|几乎无字/.test(noteBlob) && hangtagOcr.length > 0 && hangtagOcr.length < 8));
+      if (ocrTimedOut && !reviewReasons.includes('ocr_timeout')) {
+        reviewReasons.push('ocr_timeout');
+      }
       if (unclearHangtag && !reviewReasons.includes('hangtag_unclear')) {
         reviewReasons.push('hangtag_unclear');
       }
@@ -422,7 +433,11 @@ export function registerPublishProductHandler(
         subtitle,
         ocrNote: suggestion.ocrNote,
         reviewReasons,
-        explicit: unclearHangtag ? REASON_ZH.hangtag_unclear : REASON_ZH.missing_style_no,
+        explicit: ocrTimedOut
+          ? REASON_ZH.ocr_timeout
+          : unclearHangtag
+            ? REASON_ZH.hangtag_unclear
+            : REASON_ZH.missing_style_no,
       });
       return failUnrecognized(publish, user, productId, job.id, {
         failureReason,

@@ -64,7 +64,10 @@ b=io.BytesIO(); im.save(b,'JPEG',quality=int(sys.argv[3])); sys.stdout.buffer.wr
     }
   }
 
-  async chat(parts: VisionContentPart[], opts?: { maxTokens?: number; temperature?: number }): Promise<string> {
+  async chat(
+    parts: VisionContentPart[],
+    opts?: { maxTokens?: number; temperature?: number; timeoutMs?: number },
+  ): Promise<string> {
     if (!this.key) throw new Error('未配置 VISION_API_KEY');
     const body = {
       model: this.model,
@@ -73,7 +76,8 @@ b=io.BytesIO(); im.save(b,'JPEG',quality=int(sys.argv[3])); sys.stdout.buffer.wr
       messages: [{ role: 'user', content: parts }],
     };
     const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), this.timeoutMs);
+    const waitMs = opts?.timeoutMs && opts.timeoutMs > 0 ? opts.timeoutMs : this.timeoutMs;
+    const t = setTimeout(() => ac.abort(), waitMs);
     try {
       const res = await fetch(`${this.base}/chat/completions`, {
         method: 'POST',

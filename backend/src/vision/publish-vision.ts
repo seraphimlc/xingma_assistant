@@ -236,6 +236,7 @@ export function provisionalStyleNo(batchId?: string): string {
 export async function ocrImageText(
   vision: VisionClient,
   localPath: string,
+  opts?: { maxSide?: number; quality?: number; timeoutMs?: number; hangtag?: boolean },
 ): Promise<{ text: string; note: string; via: 'multimodal' | 'none' }> {
   if (!localPath || !fs.existsSync(localPath)) {
     return { text: '', note: '文件不存在', via: 'none' };
@@ -243,6 +244,8 @@ export async function ocrImageText(
   if (!vision.configured()) {
     return { text: '', note: '未配置 VISION_API_KEY', via: 'none' };
   }
+  const maxSide = opts?.maxSide ?? (opts?.hangtag ? 1200 : 1400);
+  const quality = opts?.quality ?? (opts?.hangtag ? 82 : 88);
   try {
     const parts: VisionContentPart[] = [
       {
@@ -255,10 +258,19 @@ export async function ocrImageText(
       },
       {
         type: 'image_url',
-        image_url: { url: vision.fileToDataUrl(localPath, 1400, 88) },
+        image_url: { url: vision.fileToDataUrl(localPath, maxSide, quality) },
       },
     ];
-    const content = await vision.chat(parts, { maxTokens: 900, temperature: 0 });
+    const hangtagTimeout =
+      opts?.timeoutMs ??
+      (opts?.hangtag
+        ? parseInt(process.env.VISION_HANGTAG_TIMEOUT_MS || '90000', 10)
+        : undefined);
+    const content = await vision.chat(parts, {
+      maxTokens: 900,
+      temperature: 0,
+      timeoutMs: hangtagTimeout,
+    });
     const text = String(content || '')
       .replace(/^```[\s\S]*?```$/g, '')
       .trim();
@@ -270,9 +282,18 @@ export async function ocrImageText(
       via: 'multimodal',
     };
   } catch (e: any) {
-    const msg = String(e?.message || e).slice(0, 120);
+    const raw = String(e?.message || e || '');
+    const name = String(e?.name || '');
+    const isAbort =
+      name === 'AbortError' ||
+      /aborted|AbortError|timeout|ETIMEDOUT|timed?\s*out/i.test(raw);
+    const msg = (isAbort ? 'OCR 超时' : raw).slice(0, 120);
     logger.warn(`多模态 OCR 失败: ${msg}`);
-    return { text: '', note: `多模态 OCR 失败: ${msg}`, via: 'none' };
+    return {
+      text: '',
+      note: isAbort ? `OCR 超时（多模态）` : `多模态 OCR 失败: ${msg}`,
+      via: 'none',
+    };
   }
 }
 

@@ -376,6 +376,9 @@ async function tryOcr(
     preferStrips?: boolean;
     stripHint?: number;
     vision?: VisionClient;
+    hangtag?: boolean;
+    /** 跳过多模态，直接本地 OCR（吊牌超时后的强制兜底） */
+    forceLocal?: boolean;
   },
 ): Promise<{
   text: string;
@@ -387,10 +390,12 @@ async function tryOcr(
     return { text: '', used: false, note: '文件不存在，跳过 OCR', engine: 'none' };
   }
 
-  // 1) 主路径：xytoken 多模态
-  if (opts?.vision?.configured()) {
+  // 1) 主路径：xytoken 多模态（forceLocal 时跳过）
+  if (!opts?.forceLocal && opts?.vision?.configured()) {
     try {
-      const mm = await ocrImageText(opts.vision, localPath);
+      const mm = await ocrImageText(opts.vision, localPath, {
+        hangtag: opts.hangtag,
+      });
       if (mm.text) {
         let combined = mm.text;
         let note = mm.note;
@@ -813,7 +818,9 @@ export async function buildPublishSuggestion(
     }
   }
 
-  // 吊牌图若首轮并发 OCR 为空/失败（常见于超时 abort），单独串行重试一次再抽款号
+  // 吊牌图若首轮并发 OCR 为空/失败（常见于超时 abort）：
+  // 1) 加长超时再跑多模态；2) 并行强制 tesseract/Mac 兜底；取有款号提示的文本。
+  // 禁止编造 styleNo；仍无字则把失败原因写进 ocrNote（超时 / tesseract 不可用等）。
   const hangtagImgs = images.filter((i) => i.role === 'hangtag');
   for (const img of hangtagImgs) {
     const existing = String(img.ocrText || '').trim();
@@ -823,15 +830,30 @@ export async function buildPublishSuggestion(
     if (!asset?.localPath) continue;
     try {
       analyzeLogger.log(`hangtag OCR retry mediaId=${img.mediaId} prevLen=${existing.length}`);
-      const r = await tryOcr(asset.localPath, { vision: opts?.vision });
-      if (r.used) ocrUsed = true;
-      if (r.text) {
-        ocrMap.set(asset.mediaId, r.text);
-        img.ocrText = r.text;
-        ocrNote = `${ocrNote}；吊牌重试 ${path.basename(asset.filename)}: ${r.note}`;
-      } else {
-        ocrNote = `${ocrNote}；吊牌重试 ${path.basename(asset.filename)}: ${r.note || '无文字'}`;
+      const [mmRetry, localRetry] = await Promise.all([
+        tryOcr(asset.localPath, { vision: opts?.vision, hangtag: true }),
+        tryOcr(asset.localPath, { forceLocal: true, hangtag: true }),
+      ]);
+      const candidates = [mmRetry, localRetry].filter((r) => r.used || r.text || r.note);
+      for (const r of candidates) {
+        if (r.used) ocrUsed = true;
       }
+      const pick =
+        candidates.find((r) => r.text && /款号|\d{5,6}/.test(r.text)) ||
+        candidates.find((r) => r.text) ||
+        null;
+      if (pick?.text) {
+        ocrMap.set(asset.mediaId, pick.text);
+        img.ocrText = pick.text;
+      }
+      const notes = candidates
+        .map((r) => r.note)
+        .filter(Boolean)
+        .slice(0, 3)
+        .join(' | ');
+      ocrNote = `${ocrNote}；吊牌重试 ${path.basename(asset.filename)}: ${
+        pick?.text ? notes || pick.note : notes || '无文字'
+      }`;
     } catch (e: any) {
       ocrNote = `${ocrNote}；吊牌重试失败 ${String(e?.message || e).slice(0, 80)}`;
     }
