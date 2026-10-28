@@ -33,7 +33,7 @@ xingma_assistant/
 │   │   ├── vision/            # 看图选封面 / 发品识图
 │   │   ├── customers/ levels/ shares/ inquiries/
 │   │   └── common/entities/
-│   ├── migrations/            # 001…017 SQL
+│   ├── migrations/            # 001…019 SQL
 │   ├── storage/               # 本地媒体落盘（OCR/开发）
 │   └── .env.example / .secrets/（gitignore）
 └── miniprogram/
@@ -65,7 +65,7 @@ npm install && npm run build && npm run start:dev
 ```
 
 - 监听：`http://127.0.0.1:3000` · `GET /api/health`
-- 连 MySQL：`DB_ENABLED=true` + 按序执行 `migrations/001`…`017`（见 TECH）
+- 连 MySQL：`DB_ENABLED=true` + 按序执行 `migrations/001`…`019`（见 TECH）
 
 ### 小程序
 
@@ -90,6 +90,7 @@ npm install && npm run build && npm run start:dev
 | [PROMO_EXTERNAL_OUTFIT.md](./PROMO_EXTERNAL_OUTFIT.md) | 外部穿搭 Agent + 直链不转存 OSS |
 | [生图模板设计.md](./生图模板设计.md) | 宣传图模板一览 |
 | [部署.md](./部署.md) | Nginx / 证书 / 迁移清单 |
+| [HANDOFF.md](./HANDOFF.md) | **同事交接**：部署主机、审计/发品 batch/OCR、性能改动、已知缺口 |
 
 ## 关键概念
 

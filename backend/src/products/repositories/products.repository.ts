@@ -20,6 +20,8 @@ export interface IProductsRepository {
   copy(tenantId: string, id: string, newStyleNo: string): Promise<ProductRec | null>;
 
   listSkus(tenantId: string, productId: string): Promise<ProductSkuRec[]>;
+  /** Batch SKUs for many products — one query instead of N listSkus */
+  listSkusByProductIds(tenantId: string, productIds: string[]): Promise<Map<string, ProductSkuRec[]>>;
   findSku(tenantId: string, skuId: string): Promise<ProductSkuRec | null>;
   addSku(tenantId: string, productId: string, input: CreateSkuInput): Promise<ProductSkuRec>;
   updateSku(

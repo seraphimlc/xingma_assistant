@@ -298,12 +298,19 @@ export class ProductsService {
   async listForStaff(tenantId: string, query?: ProductListQuery) {
     const { items, total } = await this.repo.list(tenantId, query);
     if (!items.length) return { items: [], total };
-    const coverMap = await this.batchFirstCoverUrls(tenantId, items);
-    const skuLists = await Promise.all(items.map((p) => this.repo.listSkus(tenantId, p.id)));
-    const withMeta = items.map((p, i) => ({
-      ...this.toStaffDto(p, skuLists[i] || []),
-      coverUrl: coverMap.get(p.id) || '',
-    }));
+    const [coverMap, skuMap] = await Promise.all([
+      this.batchFirstCoverUrls(tenantId, items),
+      this.repo.listSkusByProductIds(
+        tenantId,
+        items.map((p) => p.id),
+      ),
+    ]);
+    // 列表页只要价文案/色数；不回传完整 skus，减轻 payload
+    const withMeta = items.map((p) => {
+      const dto = this.toStaffDto(p, skuMap.get(p.id) || []);
+      const { skus: _skus, ...rest } = dto as typeof dto & { skus?: unknown };
+      return { ...rest, coverUrl: coverMap.get(p.id) || '' };
+    });
     return { items: withMeta, total };
   }
 
@@ -358,12 +365,18 @@ export class ProductsService {
       visible.push(p);
     }
     if (!visible.length) return { items: [], total: 0 };
-    const coverMap = await this.batchFirstCoverUrls(user.tenantId, visible);
-    const skuLists = await Promise.all(visible.map((p) => this.repo.listSkus(user.tenantId, p.id)));
-    const out = visible.map((p, i) => ({
-      ...this.toPublicDto(p, skuLists[i] || [], true),
-      coverUrl: coverMap.get(p.id) || '',
-    }));
+    const [coverMap, skuMap] = await Promise.all([
+      this.batchFirstCoverUrls(user.tenantId, visible),
+      this.repo.listSkusByProductIds(
+        user.tenantId,
+        visible.map((p) => p.id),
+      ),
+    ]);
+    const out = visible.map((p) => {
+      const dto = this.toPublicDto(p, skuMap.get(p.id) || [], true);
+      const { skus: _skus, ...rest } = dto as typeof dto & { skus?: unknown };
+      return { ...rest, coverUrl: coverMap.get(p.id) || '' };
+    });
     return { items: out, total: out.length };
   }
 

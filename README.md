@@ -62,3 +62,8 @@ npm run start:dev
 ## 明确不做
 
 交易支付物流、读微信笔记/好友客户端、跨档口大厅、IM 聊天直达。
+
+## 交接
+
+同事接手请先读 [docs/HANDOFF.md](./docs/HANDOFF.md)（部署主机、审计日志、发品 batch 落盘、吊牌 OCR、列表性能与已知缺口）。日常文档入口仍是 [docs/INDEX.md](./docs/INDEX.md)。
+

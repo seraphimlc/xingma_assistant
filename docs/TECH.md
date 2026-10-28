@@ -34,7 +34,7 @@ NestJS API (:3000，生产 Nginx → https://xingma.visitworld.me/api/*)
 
 ## 2. 数据表（migrations）
 
-按序执行 `001`…`017`：
+按序执行 `001`…`019`：
 
 | 文件 | 内容 |
 |------|------|
@@ -56,6 +56,7 @@ NestJS API (:3000，生产 Nginx → https://xingma.visitworld.me/api/*)
 | `015_media_asset_meta.sql` | media_assets.meta、products.ref_analysis |
 | `016_member_invite_source.sql` | tenant_members.invite_id / invite_code |
 | `017_inquiry_handler.sql` | 询价处理人 assignee_openid / assignee_name |
+| `019_list_perf_indexes.sql` | 列表热路径复合索引（products/skus/promo_sets/inquiries） |
 
 ### 关键字段速记
 
@@ -341,6 +342,20 @@ batch：内存 Map，TTL≈2h；主路径可不停留在确认页。
 
 覆盖（going-forward）：商品/SKU/封面图、分组、宣传素材 generate/regen/delete、发品 confirm/draft/discard、客户等级与规则/跟进、询价、分享、邀请/成员资料、租户设置、job 终态。
 
+## 6.y 列表性能（2026-10-28）
+
+商品 / 任务列表打开慢的主因与处理：
+
+| 问题 | 处理 |
+|------|------|
+| `listForStaff` / `listForCustomer` 对每个商品 `listSkus`（N+1） | `listSkusByProductIds` 一次 `IN` 查询；封面 URL 继续用 `batchFirstCoverUrls` |
+| 列表 payload 含完整 `skus[]` | 列表响应省略 `skus`，保留 `priceText` / `colorCount`（详情仍全量） |
+| 分页 `getCount` + `getMany` 两次 | `getManyAndCount` |
+| `appendOrphanFailedPromoSets` 对每个 orphan `findOne` job | 批量 `In(jobIds)` |
+| 缺复合索引 | 迁移 `019_list_perf_indexes.sql` |
+
+交接详见 [HANDOFF.md](./HANDOFF.md)。
+
 ## 7. 部署注意（只动 wool-api）
 
 ### 发品批次持久化 / 吊牌 OCR（2026-10-28）
@@ -348,7 +363,7 @@ batch：内存 Map，TTL≈2h；主路径可不停留在确认页。
 - 吊牌 OCR：多模态超时会标注「OCR 超时」；本地兜底依赖 `tesseract`（`chi_sim`）。生产需安装 `tesseract-ocr` + `tesseract-ocr-chi-sim`。失败**不**编造 styleNo、**不**建假品。
 
 
-服务器目录：`/srv/wool-stall-miniapp`。同机可能跑**多个** pm2 应用。
+服务器：`xingma.visitworld.me` → `8.216.43.224`（本机 ssh Host 常为 `store-old`）。目录：`/srv/wool-stall-miniapp`。同机可能跑**多个** pm2 应用。
 
 **规则**：更新本项目后端时：
 
