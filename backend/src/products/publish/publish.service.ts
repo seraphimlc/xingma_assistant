@@ -12,6 +12,7 @@ import { DataSource } from 'typeorm';
 import * as fs from 'fs';
 import * as path from 'path';
 import { AuthContext } from '../../common/interfaces/auth-context.interface';
+import { AuditService } from '../../common/audit.service';
 import { MediaAsset } from '../../common/entities/media-asset.entity';
 import { newId } from '../../common/utils/id';
 import { ProductsService } from '../products.service';
@@ -44,6 +45,7 @@ export class PublishService implements OnModuleInit {
     private readonly oss: OssClient,
     private readonly levels: LevelsService,
     private readonly groups: ProductGroupsService,
+    private readonly audit: AuditService,
     @Optional() private readonly dataSource?: DataSource,
   ) {}
 
@@ -455,6 +457,14 @@ export class PublishService implements OnModuleInit {
     this.logger.log(
       `createDraft productId=${product.id} batchId=${batchId} styleNo=${styleNo} provisional=${styleNoProvisional}`,
     );
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'publish.draft_create',
+      targetType: 'product',
+      targetId: product.id,
+      detail: { batchId, styleNo, provisional: styleNoProvisional },
+    });
     return product;
   }
 
@@ -483,6 +493,14 @@ export class PublishService implements OnModuleInit {
           [user.tenantId, productId],
         );
         this.logger.log(`discardUnrecognizedProduct hard-deleted productId=${productId}`);
+        this.audit.enqueue({
+          tenantId: user.tenantId,
+          actor: user,
+          action: 'publish.discard_unrecognized',
+          targetType: 'product',
+          targetId: productId,
+          detail: { hardDeleted: true },
+        });
         return { ok: true, deleted: true };
       } catch (e: any) {
         this.logger.warn(`discard hard-delete failed productId=${productId}: ${String(e?.message || e).slice(0, 160)}`);
@@ -845,6 +863,14 @@ export class PublishService implements OnModuleInit {
     }
 
     this.batchStore.delete(batch.tenantId, batch.batchId);
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'publish.confirm',
+      targetType: 'product',
+      targetId: product.id,
+      detail: { batchId: input.batchId, styleNo: input.styleNo?.trim(), status: input.status || 'on_sale', coverCount: finalCovers.length },
+    });
     return product;
   }
 

@@ -9,6 +9,7 @@ import { DataSource, In, Repository } from 'typeorm';
 import { hostname } from 'os';
 import { newId } from '../common/utils/id';
 import { AuthContext } from '../common/interfaces/auth-context.interface';
+import { AuditService } from '../common/audit.service';
 import { JobEntity } from '../common/entities/job.entity';
 import { JobEventEntity } from '../common/entities/job-event.entity';
 import {
@@ -34,6 +35,7 @@ export class JobsService {
   readonly workerId = `worker_${hostname().slice(0, 24)}_${process.pid}`;
 
   constructor(
+    private readonly audit: AuditService,
     @Optional() private readonly dataSource?: DataSource,
     @Optional() private readonly oss?: OssClient,
   ) {}
@@ -146,6 +148,18 @@ export class JobsService {
     });
     await repo.save(row);
     await this.appendEvent(row, 'created', '任务已创建', { type });
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'job.create',
+      targetType: 'job',
+      targetId: row.id,
+      detail: {
+        type,
+        productId: (payload as any)?.productId || null,
+        setId: (payload as any)?.setId || null,
+      },
+    });
     return this.toDto(row);
   }
 
@@ -857,6 +871,15 @@ export class JobsService {
       }
       await sets.save(row);
       this.logger.log(`promo_set ${setId} → ${status} (job ${job.id} terminal)`);
+      this.audit.enqueue({
+        tenantId: job.tenantId,
+        actor: null,
+        actorSnapshot: AuditService.systemActor(job.id),
+        action: 'promo_set.status',
+        targetType: 'promo_set',
+        targetId: setId,
+        detail: { status, jobId: job.id, jobType: job.type, productId: row.productId },
+      });
     } catch (e) {
       this.logger.warn(`markPromoSetTerminal: ${(e as Error).message}`);
     }
@@ -1026,6 +1049,21 @@ export class JobsService {
     };
     await this.jobs().save(job);
     await this.appendEvent(job, 'succeeded', '任务成功', { keys: Object.keys(result || {}) });
+    this.audit.enqueue({
+      tenantId: job.tenantId,
+      actor: null,
+      actorSnapshot: AuditService.systemActor(job.id),
+      action: 'job.succeeded',
+      targetType: 'job',
+      targetId: job.id,
+      detail: {
+        jobId: job.id,
+        type: job.type,
+        productId: (job.payload as any)?.productId || (result as any)?.productId || null,
+        setId: (job.payload as any)?.setId || (result as any)?.setId || null,
+        keys: Object.keys(result || {}),
+      },
+    });
   }
 
   async markFailed(job: JobEntity, err: string, opts?: { requeue?: boolean; delayMs?: number }) {
@@ -1050,6 +1088,21 @@ export class JobsService {
     await this.jobs().save(job);
     await this.appendEvent(job, 'failed', msg, null, 'error');
     await this.markPromoSetTerminal(job, 'failed', msg);
+    this.audit.enqueue({
+      tenantId: job.tenantId,
+      actor: null,
+      actorSnapshot: AuditService.systemActor(job.id),
+      action: 'job.failed',
+      targetType: 'job',
+      targetId: job.id,
+      detail: {
+        jobId: job.id,
+        type: job.type,
+        productId: (job.payload as any)?.productId || null,
+        setId: (job.payload as any)?.setId || null,
+        error: msg.slice(0, 200),
+      },
+    });
   }
 
   async updateProgress(jobId: string, tenantId: string, patch: Partial<JobProgress>) {

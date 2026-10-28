@@ -7,6 +7,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { AuthContext } from '../common/interfaces/auth-context.interface';
+import { AuditService } from '../common/audit.service';
 import { newId } from '../common/utils/id';
 import { LevelsService } from '../levels/levels.service';
 import { CustomerRec } from './customer.types';
@@ -19,6 +20,7 @@ export class CustomersService {
   constructor(
     @Inject(CUSTOMERS_REPO) private readonly repo: ICustomersRepository,
     private readonly levels: LevelsService,
+    private readonly audit: AuditService,
     @Optional()
     @Inject(forwardRef(() => InquiriesService))
     private readonly inquiries?: InquiriesService,
@@ -108,7 +110,7 @@ export class CustomersService {
   }
 
   /** 人工调整等级：以租户配置为准，不信任客户端传来的 rank/code */
-  async updateLevel(tenantId: string, customerId: string, levelId: string) {
+  async updateLevel(tenantId: string, customerId: string, levelId: string, actor?: AuthContext | null) {
     const level = await this.levels.getCustomerLevel(tenantId, levelId);
     const updated = await this.repo.update(tenantId, customerId, {
       levelId: level.id,
@@ -116,16 +118,32 @@ export class CustomersService {
       rank: level.rank,
     });
     if (!updated) throw new NotFoundException('客户不存在');
+    this.audit.enqueue({
+      tenantId,
+      actor: actor || null,
+      action: 'customer.level.update',
+      targetType: 'customer',
+      targetId: customerId,
+      detail: { levelId: level.id, levelCode: level.code },
+    });
     return updated;
   }
 
-  async batchUpdateLevel(tenantId: string, ids: string[], levelId: string) {
+  async batchUpdateLevel(tenantId: string, ids: string[], levelId: string, actor?: AuthContext | null) {
     if (!ids?.length) throw new BadRequestException('ids 不能为空');
     const level = await this.levels.getCustomerLevel(tenantId, levelId);
     const n = await this.repo.batchUpdateLevel(tenantId, ids, {
       levelId: level.id,
       levelCode: level.code,
       rank: level.rank,
+    });
+    this.audit.enqueue({
+      tenantId,
+      actor: actor || null,
+      action: 'customer.level.batch_update',
+      targetType: 'customer',
+      targetId: ids[0] || null,
+      detail: { ids, levelId: level.id, affected: n },
     });
     return { ok: true, affected: n };
   }
@@ -138,19 +156,36 @@ export class CustomersService {
     if (!body.content?.trim()) throw new BadRequestException('内容不能为空');
     const c = await this.repo.findById(user.tenantId, customerId);
     if (!c) throw new NotFoundException('客户不存在');
-    return this.repo.addFollowUp(user.tenantId, {
+    const fu = await this.repo.addFollowUp(user.tenantId, {
       customerId,
       authorMemberId: user.memberId || 'unknown',
       content: body.content.trim(),
       kind: body.kind || 'note',
       inquiryId: body.inquiryId ?? null,
     });
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'customer.follow_up.create',
+      targetType: 'follow_up',
+      targetId: fu.id,
+      detail: { customerId, kind: fu.kind || body.kind || 'note' },
+    });
+    return fu;
   }
 
-  async removeFollowUp(tenantId: string, customerId: string, followUpId: string) {
+  async removeFollowUp(tenantId: string, customerId: string, followUpId: string, actor?: AuthContext | null) {
     const list = await this.repo.listFollowUps(tenantId, customerId);
     if (!list.some((f) => f.id === followUpId)) throw new NotFoundException('跟进记录不存在');
     await this.repo.removeFollowUp(tenantId, followUpId);
+    this.audit.enqueue({
+      tenantId,
+      actor: actor || null,
+      action: 'customer.follow_up.delete',
+      targetType: 'follow_up',
+      targetId: followUpId,
+      detail: { customerId },
+    });
     return { ok: true };
   }
 
@@ -161,6 +196,7 @@ export class CustomersService {
   async upsertRule(
     tenantId: string,
     body: { customerId: string; productId: string; effect: 'allow' | 'deny'; remark?: string },
+    actor?: AuthContext | null,
   ) {
     if (!body.customerId || !body.productId) throw new BadRequestException('客户与商品必填');
     if (body.effect !== 'allow' && body.effect !== 'deny') {
@@ -168,12 +204,29 @@ export class CustomersService {
     }
     const c = await this.repo.findById(tenantId, body.customerId);
     if (!c) throw new NotFoundException('客户不存在');
-    return this.repo.upsertRule(tenantId, body);
+    const rule = await this.repo.upsertRule(tenantId, body);
+    this.audit.enqueue({
+      tenantId,
+      actor: actor || null,
+      action: 'customer.rule.upsert',
+      targetType: 'customer_product_rule',
+      targetId: rule.id,
+      detail: { customerId: body.customerId, productId: body.productId, effect: body.effect },
+    });
+    return rule;
   }
 
-  async removeRule(tenantId: string, id: string) {
+  async removeRule(tenantId: string, id: string, actor?: AuthContext | null) {
     const ok = await this.repo.removeRule(tenantId, id);
     if (!ok) throw new NotFoundException('规则不存在');
+    this.audit.enqueue({
+      tenantId,
+      actor: actor || null,
+      action: 'customer.rule.delete',
+      targetType: 'customer_product_rule',
+      targetId: id,
+      detail: {},
+    });
     return { ok: true };
   }
 

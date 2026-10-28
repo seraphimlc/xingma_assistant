@@ -29,7 +29,7 @@ export class LevelsController {
   @Post('customer')
   @Roles('owner', 'staff')
   createCustomer(@AuthUser() user: AuthContext, @Body() body: UpsertCustomerLevelInput) {
-    return this.levels.createCustomerLevel(user.tenantId, body);
+    return this.levels.createCustomerLevel(user.tenantId, body, user);
   }
 
   @Patch('customer/:id')
@@ -39,13 +39,13 @@ export class LevelsController {
     @Param('id') id: string,
     @Body() body: Partial<UpsertCustomerLevelInput>,
   ) {
-    return this.levels.updateCustomerLevel(user.tenantId, id, body);
+    return this.levels.updateCustomerLevel(user.tenantId, id, body, user);
   }
 
   @Delete('customer/:id')
   @Roles('owner', 'staff')
   deleteCustomer(@AuthUser() user: AuthContext, @Param('id') id: string) {
-    return this.levels.deleteCustomerLevel(user.tenantId, id);
+    return this.levels.deleteCustomerLevel(user.tenantId, id, user);
   }
 
   @Get('product')
@@ -57,7 +57,7 @@ export class LevelsController {
   @Post('product')
   @Roles('owner', 'staff')
   createProduct(@AuthUser() user: AuthContext, @Body() body: UpsertProductLevelInput) {
-    return this.levels.createProductLevel(user.tenantId, body);
+    return this.levels.createProductLevel(user.tenantId, body, user);
   }
 
   @Patch('product/:id')
@@ -67,12 +67,12 @@ export class LevelsController {
     @Param('id') id: string,
     @Body() body: Partial<UpsertProductLevelInput>,
   ) {
-    return this.levels.updateProductLevel(user.tenantId, id, body);
+    return this.levels.updateProductLevel(user.tenantId, id, body, user);
   }
 
   @Delete('product/:id')
   @Roles('owner', 'staff')
   deleteProduct(@AuthUser() user: AuthContext, @Param('id') id: string) {
-    return this.levels.deleteProductLevel(user.tenantId, id);
+    return this.levels.deleteProductLevel(user.tenantId, id, user);
   }
 }

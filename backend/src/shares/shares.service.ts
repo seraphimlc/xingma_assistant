@@ -9,6 +9,7 @@ import { randomUUID } from 'crypto';
 import { ShareEvent } from '../common/entities/share-event.entity';
 import { ShareEventBinding } from '../common/entities/share-event-binding.entity';
 import { AuthContext } from '../common/interfaces/auth-context.interface';
+import { AuditService } from '../common/audit.service';
 import { ProductAccessService, SharePolicy } from '../products/product-access.service';
 import { ProductsService } from '../products/products.service';
 import { CustomersService } from '../customers/customers.service';
@@ -49,6 +50,7 @@ export class SharesService {
     private readonly access: ProductAccessService,
     private readonly products: ProductsService,
     private readonly customers: CustomersService,
+    private readonly audit: AuditService,
     @Optional() private readonly ds?: DataSource,
   ) {}
 
@@ -265,6 +267,14 @@ export class SharesService {
       };
       this.shares.set(rec.id, rec);
     }
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'share.create',
+      targetType: 'share_event',
+      targetId: rec.id,
+      detail: { productId: rec.productId, sharePolicy: policy, slotLimit },
+    });
     return {
       shareId: rec.id,
       productId: rec.productId,

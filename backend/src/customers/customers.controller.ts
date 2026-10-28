@@ -41,7 +41,7 @@ export class CustomersController {
     @AuthUser() user: AuthContext,
     @Body() body: { ids: string[]; levelId: string },
   ) {
-    return this.customersService.batchUpdateLevel(user.tenantId, body.ids, body.levelId);
+    return this.customersService.batchUpdateLevel(user.tenantId, body.ids, body.levelId, user);
   }
 
   @Post('rules')
@@ -50,13 +50,13 @@ export class CustomersController {
     @AuthUser() user: AuthContext,
     @Body() body: { customerId: string; productId: string; effect: 'allow' | 'deny'; remark?: string },
   ) {
-    return this.customersService.upsertRule(user.tenantId, body);
+    return this.customersService.upsertRule(user.tenantId, body, user);
   }
 
   @Delete('rules/:ruleId')
   @Roles('owner', 'staff')
   removeRule(@AuthUser() user: AuthContext, @Param('ruleId') ruleId: string) {
-    return this.customersService.removeRule(user.tenantId, ruleId);
+    return this.customersService.removeRule(user.tenantId, ruleId, user);
   }
 
   /** 该客户访问过的商品（product_view_events） */
@@ -88,7 +88,7 @@ export class CustomersController {
     @Param('id') id: string,
     @Body() body: { levelId: string },
   ) {
-    return this.customersService.updateLevel(user.tenantId, id, body.levelId);
+    return this.customersService.updateLevel(user.tenantId, id, body.levelId, user);
   }
 
   @Post(':id/follow-ups')
@@ -108,7 +108,7 @@ export class CustomersController {
     @Param('id') id: string,
     @Param('fuId') fuId: string,
   ) {
-    return this.customersService.removeFollowUp(user.tenantId, id, fuId);
+    return this.customersService.removeFollowUp(user.tenantId, id, fuId, user);
   }
 
   @Get(':id/rules')
