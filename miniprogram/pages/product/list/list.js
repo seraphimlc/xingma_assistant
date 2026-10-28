@@ -85,7 +85,7 @@ Page({
     groupId: '',
     groups: [],
     currentGroupName: '本季款式',
-    statusLabel: { on_sale: '在售', off_sale: '下架' },
+    statusLabel: { on_sale: '在售', off_sale: '下架', draft: '下架' },
     page: 1,
     total: 0,
     hasMore: true,
