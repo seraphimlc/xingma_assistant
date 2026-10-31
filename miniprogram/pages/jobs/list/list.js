@@ -185,25 +185,53 @@ Page({
 
   onStatus(e) {
     this.setData({ status: e.currentTarget.dataset.id || '' });
-    this.reload();
+    this.reload(true);
   },
   onType(e) {
     this.setData({ type: e.currentTarget.dataset.id || '' });
-    this.reload();
+    this.reload(true);
   },
 
-  reload() {
-    this.setData({ offset: 0, hasMore: true, list: [] });
+  /**
+   * reload(reset)：reset=true（切筛选/进入页）才清列表；
+   * 轮询/下拉刷新走静默路径——不清列表、不闪 loading，避免整页跳动。
+   */
+  reload(reset) {
+    if (reset) {
+      clearTimeout(this.timer);
+      this.setData({ offset: 0, hasMore: true, list: [] });
+    }
     return this.fetchPage(0, false);
   },
   loadMore() {
     return this.fetchPage(this.data.offset + this.data.pageSize, true);
   },
 
+  /** 装饰后的行内容是否有变化（轮询时无变化则跳过 setData，防整表重渲） */
+  sameFirstPage(prev, next) {
+    if (!Array.isArray(prev) || !Array.isArray(next)) return false;
+    if (prev.length !== next.length) return false;
+    for (let i = 0; i < next.length; i++) {
+      if (JSON.stringify(prev[i]) !== JSON.stringify(next[i])) return false;
+    }
+    return true;
+  },
+
+  /** 有进行中任务时续接轮询（静默 fetchPage，不走 reload） */
+  schedulePoll(list, append) {
+    clearTimeout(this.timer);
+    const busy = (list || []).some((j) => j.status === 'queued' || j.status === 'running');
+    if (busy && !append) {
+      this.timer = setTimeout(() => this.fetchPage(0, false), 3000);
+    }
+  },
+
   async fetchPage(offset, append) {
     clearTimeout(this.timer);
+    const hasList = (this.data.list || []).length > 0;
     if (append) this.setData({ loadingMore: true });
-    else this.setData({ loading: true });
+    else if (!hasList) this.setData({ loading: true });
+    // 已有数据的首屏刷新：静默（不闪 loading、不清列表）
     try {
       const limit = this.data.pageSize || 20;
       const qs = [`limit=${limit}`, `offset=${offset}`];
@@ -213,6 +241,11 @@ Page({
       // 仅 user-facing；系统 job 由后端 + 前端白名单共同隐藏
       const raw = (res.items || []).filter((j) => isUserVisibleJobType(j.type));
       const items = raw.map(enrich);
+      if (!append && hasList && this.sameFirstPage(this.data.list.slice(0, items.length), items)) {
+        // 内容无变化：不 setData，只续接轮询
+        this.schedulePoll(this.data.list, append);
+        return;
+      }
       const list = append ? this.data.list.concat(items) : items;
       const hasMore = items.length >= limit;
       this.setData({
@@ -223,11 +256,7 @@ Page({
         loading: false,
         loadingMore: false,
       });
-      const busy = list.some((j) => j.status === 'queued' || j.status === 'running');
-      if (busy && !append) {
-        // 刷新首屏轮询；加载更多时不重置整表
-        this.timer = setTimeout(() => this.reload(), 3000);
-      }
+      this.schedulePoll(list, append);
     } catch (e) {
       this.setData({ loading: false, loadingMore: false });
       wx.showToast({ title: e.message || '加载失败', icon: 'none' });
