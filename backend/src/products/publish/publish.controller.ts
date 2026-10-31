@@ -118,7 +118,11 @@ export class PublishController {
     return this.publish.analyze(user, batchId, body);
   }
 
-  /** 待补全商品：上传单张吊牌图 OCR，返回建议字段；传 productId 时吊牌图挂进商品图集 */
+  /**
+   * 待补全商品：吊牌图识别，返回建议字段。
+   * 优先 body.objectKey（客户端直传 OSS 后只传 key）；兼容 multipart file。
+   * 传 productId 时吊牌图挂进商品图集。
+   */
   @Post('hangtag-analyze')
   @UseInterceptors(
     FilesInterceptor('file', 1, {
@@ -129,7 +133,7 @@ export class PublishController {
   hangtagAnalyze(
     @AuthUser() user: AuthContext,
     @UploadedFiles() files: Express.Multer.File[],
-    @Body() body: { productId?: string },
+    @Body() body: { productId?: string; objectKey?: string },
   ) {
     return this.publish.hangtagAnalyze(user, files?.[0], body);
   }

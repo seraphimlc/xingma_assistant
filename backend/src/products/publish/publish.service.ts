@@ -563,34 +563,56 @@ export class PublishService implements OnModuleInit {
   }
 
   /**
-   * 待补全商品：上传单张吊牌图 OCR，返回建议字段（款号/颜色/材质/尺码）。
-   * 传 productId 时吊牌图同时挂进商品图集。
+   * 待补全商品：吊牌图识别，返回建议字段（款号/颜色/材质/尺码）。
+   * 优先 objectKey（客户端直传 OSS 后只传 key，不经服务器中转）；
+   * 兼容 multipart file（服务器落盘 + 转存 OSS）。传 productId 时吊牌图挂进商品图集。
    */
   async hangtagAnalyze(
     user: AuthContext,
     file: Express.Multer.File | undefined,
-    body?: { productId?: string },
+    body?: { productId?: string; objectKey?: string },
   ) {
-    if (!file || !file.buffer?.length) throw new BadRequestException('请上传吊牌图片');
     const productId = String(body?.productId || '').trim();
+    const keyInput = String(body?.objectKey || '').trim();
 
-    let styleDir: string | null = null;
-    if (productId) {
-      const detail = await this.products.getDetail(user, productId);
-      if (!detail) throw new NotFoundException('商品不存在');
-      styleDir = String((detail as any).styleNo || '').trim();
+    let objectKey = '';
+    let url = '';
+    let localPath = '';
+    let mimeType = 'image/jpeg';
+    let sizeBytes = 0;
+
+    if (keyInput) {
+      // 安全校验：objectKey 必须属于当前租户目录
+      if (!keyInput.startsWith(`tenants/${user.tenantId}/`)) {
+        throw new BadRequestException('objectKey 不属于当前租户');
+      }
+      objectKey = keyInput;
+      url = this.oss.publicUrl(objectKey);
+      const ext = path.extname(objectKey).toLowerCase();
+      mimeType =
+        ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : ext === '.gif' ? 'image/gif' : 'image/jpeg';
+      this.logger.log(`hangtagAnalyze(url-only) productId=${productId || '-'} objectKey=${objectKey}`);
+    } else {
+      if (!file || !file.buffer?.length) throw new BadRequestException('请上传吊牌图片');
+      let styleDir: string | null = null;
+      if (productId) {
+        const detail = await this.products.getDetail(user, productId);
+        if (!detail) throw new NotFoundException('商品不存在');
+        styleDir = String((detail as any).styleNo || '').trim();
+      }
+      const ext = path.extname(file.originalname || '') || this.extFromMime(file.mimetype) || '.jpg';
+      const stamp = Date.now();
+      const relDir = styleDir
+        ? `tenants/${user.tenantId}/products/${styleDir}`
+        : `tenants/${user.tenantId}/hangtag`;
+      objectKey = `${relDir}/hangtag_${stamp}${ext}`;
+      localPath = path.join(this.storageRoot(), relDir, `hangtag_${stamp}${ext}`);
+      fs.mkdirSync(path.dirname(localPath), { recursive: true });
+      fs.writeFileSync(localPath, file.buffer);
+      mimeType = file.mimetype || 'image/jpeg';
+      sizeBytes = file.size || file.buffer.length;
+      url = await this.oss.putObjectSafe(file.buffer, objectKey, mimeType);
     }
-    const ext = path.extname(file.originalname || '') || this.extFromMime(file.mimetype) || '.jpg';
-    const stamp = Date.now();
-    const relDir = styleDir
-      ? `tenants/${user.tenantId}/products/${styleDir}`
-      : `tenants/${user.tenantId}/hangtag`;
-    const objectKey = `${relDir}/hangtag_${stamp}${ext}`;
-    const localPath = path.join(this.storageRoot(), relDir, `hangtag_${stamp}${ext}`);
-    fs.mkdirSync(path.dirname(localPath), { recursive: true });
-    fs.writeFileSync(localPath, file.buffer);
-    const mimeType = file.mimetype || 'image/jpeg';
-    const url = await this.oss.putObjectSafe(file.buffer, objectKey, mimeType);
 
     const ocr = await ocrImageText(this.vision, localPath, { hangtag: true, imageUrl: url });
     const text = String(ocr.text || '');
@@ -609,7 +631,7 @@ export class PublishService implements OnModuleInit {
       mediaId = await this.insertMediaAsset(user.tenantId, {
         objectKey,
         mimeType,
-        sizeBytes: file.size || file.buffer.length,
+        sizeBytes,
       });
       await this.updateMediaAsset(user.tenantId, mediaId, { productId });
       this.logger.log(`hangtagAnalyze attach productId=${productId} mediaId=${mediaId} ocr=${ocr.via}`);

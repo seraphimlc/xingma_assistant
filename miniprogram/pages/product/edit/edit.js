@@ -1,4 +1,5 @@
 const { request } = require('../../../utils/request');
+const { uploadOneMedia } = require('../../../utils/oss-direct');
 
 function buildDescription(sizeText, description) {
   const size = (sizeText || '').trim();
@@ -371,35 +372,23 @@ Page({
     });
   },
   uploadHangtag(filePath) {
-    const app = getApp();
-    const baseUrl = app.globalData.baseUrl || '';
-    const token = app.globalData.token || wx.getStorageSync('token') || '';
-    const tenantId = app.globalData.tenantId || 'tenant_dev_001';
     this.setData({ hangtagScanning: true });
-    wx.showLoading({ title: '吊牌识别中' });
-    wx.uploadFile({
-      url: `${baseUrl}/api/products/publish/hangtag-analyze`,
-      filePath,
-      name: 'file',
-      formData: { productId: this.data.id || '' },
-      timeout: 150000, // OCR 全程约 60-90s，默认 60s 会被客户端掐断
-      header: {
-        Authorization: token ? `Bearer ${token}` : '',
-        'X-Tenant-Id': tenantId,
-        'X-Wx-Appid': app.globalData.appId || 'wx394d23ea099d8a01',
-      },
-      success: (res) => {
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          let msg = `识别失败 ${res.statusCode}`;
-          try { msg = JSON.parse(res.data).message || msg; } catch (e) { /* */ }
-          wx.showToast({ title: msg, icon: 'none', duration: 2500 });
-          return;
-        }
-        let r;
-        try { r = JSON.parse(res.data); } catch (e) {
-          wx.showToast({ title: '识别响应解析失败', icon: 'none' });
-          return;
-        }
+    wx.showLoading({ title: '上传吊牌图' });
+    (async () => {
+      try {
+        // 先直传 OSS（不经后端中转），再把 objectKey 交给后端识别
+        const up = await uploadOneMedia(filePath, {
+          purpose: 'uploads',
+          productId: this.data.id || undefined,
+          batchId: 'hangtag' + Date.now().toString(36),
+        });
+        if (!up || !up.objectKey) throw new Error('吊牌图上传失败');
+        wx.showLoading({ title: '吊牌识别中' });
+        const r = await request({
+          url: '/api/products/publish/hangtag-analyze',
+          method: 'POST',
+          data: { objectKey: up.objectKey, productId: this.data.id || '' },
+        });
         const patch = {};
         if (r.styleNo) patch.styleNo = r.styleNo;
         const curName = (this.data.name || '').trim();
@@ -426,15 +415,13 @@ Page({
           icon: 'none',
           duration: 2200,
         });
-      },
-      fail: () => {
-        wx.showToast({ title: '吊牌识别请求失败', icon: 'none' });
-      },
-      complete: () => {
+      } catch (e) {
+        wx.showToast({ title: String((e && e.message) || e || '吊牌识别失败').slice(0, 40), icon: 'none', duration: 2500 });
+      } finally {
         wx.hideLoading();
         this.setData({ hangtagScanning: false });
-      },
-    });
+      }
+    })();
   },
   onName(e) { this.setData({ name: e.detail.value }); },
   onMaterial(e) { this.setData({ material: e.detail.value }); },
