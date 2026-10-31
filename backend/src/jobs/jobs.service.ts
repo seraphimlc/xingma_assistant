@@ -454,14 +454,14 @@ export class JobsService {
     if (query?.status) {
       items = items.filter((it) => String(it.status || '') === String(query.status));
     }
-    // 截断时优先保留排队/在做/失败，再补完成态
+    // 截断窗口时优先保留排队/在做/失败，再补完成态；展示顺序始终按创建时间倒序
     const rankKeep = (st: string) => {
       if (st === 'running' || st === 'queued') return 0;
       if (st === 'failed') return 1;
       if (st === 'cancelled') return 2;
       return 3;
     };
-    items = items
+    const pool = items
       .slice()
       .sort((a, b) => {
         const ra = rankKeep(String(a.status || ''));
@@ -469,9 +469,14 @@ export class JobsService {
         if (ra !== rb) return ra - rb;
         return Number(b.createdAt || 0) - Number(a.createdAt || 0);
       })
+      .slice(0, fetchTake);
+    // 展示分页：最新任务在前（含待补全/完成态），不再按状态分组压底
+    const page = pool
+      .slice()
+      .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
       .slice(skip, skip + take);
-    await this.enrichProductMeta(user.tenantId, items);
-    return { items, total: items.length };
+    await this.enrichProductMeta(user.tenantId, page);
+    return { items: page, total: page.length };
   }
 
   /**
