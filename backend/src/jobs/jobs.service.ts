@@ -1096,6 +1096,36 @@ export class JobsService {
     });
   }
 
+  /**
+   * 待补全商品补录保存后：对应 publish_product 任务转「已完成」。
+   * result.pendingCompletion 置 false（列表/详情即显示已完成），并带上补全后的款号。
+   */
+  async markPendingCompletionsDone(tenantId: string, productId: string, styleNo?: string | null) {
+    if (!(this.dataSource && process.env.DB_ENABLED === 'true')) return;
+    try {
+      await this.dataSource.query(
+        `UPDATE jobs SET
+           result = JSON_SET(result,
+             '$.pendingCompletion', CAST('false' AS JSON),
+             '$.outcome', '已补全',
+             '$.styleNo', ?),
+           progress = JSON_SET(COALESCE(progress, JSON_OBJECT()), '$.message', '已补全信息，任务完成')
+         WHERE type = 'publish_product'
+           AND status = 'succeeded'
+           AND JSON_EXTRACT(result, '$.pendingCompletion') = true
+           AND (
+             JSON_UNQUOTE(JSON_EXTRACT(result, '$.productId')) = ?
+             OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.productId')) = ?
+           )`,
+        [styleNo ? String(styleNo).slice(0, 64) : null, productId, productId],
+      );
+    } catch (e: any) {
+      this.logger.warn(
+        `markPendingCompletionsDone failed productId=${productId}: ${String(e?.message || e).slice(0, 120)}`,
+      );
+    }
+  }
+
   async markFailed(job: JobEntity, err: string, opts?: { requeue?: boolean; delayMs?: number }) {
     const msg = String(err || 'unknown').slice(0, 800);
     if (opts?.requeue && job.attempts < job.maxAttempts) {

@@ -18,6 +18,7 @@ import { ProductViewEvent } from '../common/entities/product-view-event.entity';
 import { ShareEventBinding } from '../common/entities/share-event-binding.entity';
 import { ShareEvent } from '../common/entities/share-event.entity';
 import { LevelsService } from '../levels/levels.service';
+import { JobsService } from '../jobs/jobs.service';
 import { ProductAccessService, SharePolicy } from './product-access.service';
 import {
   CreateProductInput,
@@ -41,6 +42,7 @@ export class ProductsService {
     @Inject(PRODUCTS_REPO) private readonly repo: IProductsRepository,
     private readonly access: ProductAccessService,
     private readonly levels: LevelsService,
+    private readonly jobs: JobsService,
     private readonly oss: OssClient,
     private readonly groups: ProductGroupsService,
     private readonly tenants: TenantsService,
@@ -630,6 +632,7 @@ export class ProductsService {
       await this.levels.getProductLevel(user.tenantId, input.levelId);
     }
     // 待补全商品补录保存：清除 needReview / 待补信息 / provisionalStyleNo / review:* 标记
+    let clearedReviewTags = false;
     if ((input as any).clearReviewTags) {
       const cur = await this.repo.findById(user.tenantId, id);
       if (!cur) throw new NotFoundException('商品不存在');
@@ -642,6 +645,7 @@ export class ProductsService {
       );
       (input as any).tags = cleaned;
       delete (input as any).clearReviewTags;
+      clearedReviewTags = true;
     }
     if (input.coverMediaIds) {
       const existing = await this.repo.findById(user.tenantId, id);
@@ -658,6 +662,11 @@ export class ProductsService {
     }
     const updated = await this.repo.update(user.tenantId, id, input);
     if (!updated) throw new NotFoundException('商品不存在');
+    // 待补全任务闭环：补录保存成功后，任务中心对应任务转「已完成」
+    if (clearedReviewTags) {
+      const newStyleNo = String((input as any).styleNo || '').trim();
+      await this.jobs.markPendingCompletionsDone(user.tenantId, id, newStyleNo || null);
+    }
     this.audit.enqueue({
       tenantId: user.tenantId,
       actor: user,
