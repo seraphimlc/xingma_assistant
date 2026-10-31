@@ -76,18 +76,38 @@ function normalizeVisionColors(list: unknown): string[] {
  * 无吊牌/OCR 清晰品名时应走此路径，勿用文件名占位。
  * 失败时返回兜底标题，保证非空。
  */
+function isHttpUrl(u?: string | null): boolean {
+  return !!u && /^https?:\/\//.test(u);
+}
+
+/** 传图优先公网 URL（网关对大 base64 请求体慢且不稳）；无 URL 回退 base64 */
+function pickImageUrl(
+  vision: VisionClient,
+  url: string | undefined | null,
+  localPath: string,
+  maxSide = 768,
+  quality = 70,
+): string {
+  if (isHttpUrl(url)) return url as string;
+  return vision.fileToDataUrl(localPath, maxSide, quality);
+}
+
 export async function generateProductTitle(
   vision: VisionClient,
   localPaths: string | string[],
-  opts?: { styleNo?: string },
+  opts?: { styleNo?: string; urls?: string[] },
 ): Promise<VisionTitleResult> {
   const fallback = opts?.styleNo
     ? `款号 ${opts.styleNo}`
     : '针织上衣';
-  const paths = (Array.isArray(localPaths) ? localPaths : [localPaths])
-    .filter((p) => p && fs.existsSync(p))
+  const input = Array.isArray(localPaths) ? localPaths : [localPaths];
+  // 先配对再过滤，保证 urls 与 paths 下标对齐
+  const pairs = input
+    .map((p, i) => ({ path: p, url: opts?.urls?.[i] }))
+    .filter((x) => (x.path && fs.existsSync(x.path)) || isHttpUrl(x.url))
     .slice(0, 4);
-  if (!paths.length) {
+  const paths = pairs.map((x) => x.path as string);
+  if (!pairs.length) {
     return { title: fallback, via: 'fallback', reason: '商品图不存在' };
   }
   if (!vision.configured()) {
@@ -110,14 +130,14 @@ export async function generateProductTitle(
     for (let i = 0; i < paths.length; i++) {
       parts.push({
         type: 'text',
-        text: `image_${i} file=${path.basename(paths[i])}`,
+        text: `image_${i} file=${path.basename(paths[i] || '')}`,
       });
       parts.push({
         type: 'image_url',
-        image_url: { url: vision.fileToDataUrl(paths[i]) },
+        image_url: { url: pickImageUrl(vision, pairs[i]?.url, paths[i]) },
       });
     }
-    const content = await vision.chat(parts, { maxTokens: 200, temperature: 0.2 });
+    const content = await vision.chat(parts, { maxTokens: vision.maxOutputTokens, temperature: 0.2 });
     const parsed = parseJsonLoose(content);
     const title = sanitizeTitle(parsed.title);
     const subtitle = sanitizeSubtitle(parsed.subtitle);
@@ -145,9 +165,15 @@ export async function generateProductTitle(
 export async function estimateGarmentColors(
   vision: VisionClient,
   localPaths: string[],
+  urls?: string[],
 ): Promise<VisionColorsResult> {
-  const paths = (localPaths || []).filter((p) => p && fs.existsSync(p)).slice(0, 4);
-  if (!paths.length) {
+  const input = localPaths || [];
+  const pairs = input
+    .map((p, i) => ({ path: p, url: urls?.[i] }))
+    .filter((x) => (x.path && fs.existsSync(x.path)) || isHttpUrl(x.url))
+    .slice(0, 4);
+  const paths = pairs.map((x) => x.path as string);
+  if (!pairs.length) {
     return { colors: [], via: 'none', reason: '无可用图片' };
   }
   if (!vision.configured()) {
@@ -168,14 +194,14 @@ export async function estimateGarmentColors(
     for (let i = 0; i < paths.length; i++) {
       parts.push({
         type: 'text',
-        text: `image_${i} file=${path.basename(paths[i])}`,
+        text: `image_${i} file=${path.basename(paths[i] || '')}`,
       });
       parts.push({
         type: 'image_url',
-        image_url: { url: vision.fileToDataUrl(paths[i]) },
+        image_url: { url: pickImageUrl(vision, pairs[i]?.url, paths[i]) },
       });
     }
-    const content = await vision.chat(parts, { maxTokens: 300, temperature: 0 });
+    const content = await vision.chat(parts, { maxTokens: vision.maxOutputTokens, temperature: 0 });
     const parsed = parseJsonLoose(content);
     const colors = normalizeVisionColors(parsed.colors);
     if (!colors.length) {
@@ -236,9 +262,10 @@ export function provisionalStyleNo(batchId?: string): string {
 export async function ocrImageText(
   vision: VisionClient,
   localPath: string,
-  opts?: { maxSide?: number; quality?: number; timeoutMs?: number; hangtag?: boolean },
+  opts?: { maxSide?: number; quality?: number; timeoutMs?: number; hangtag?: boolean; imageUrl?: string },
 ): Promise<{ text: string; note: string; via: 'multimodal' | 'none' }> {
-  if (!localPath || !fs.existsSync(localPath)) {
+  const useUrl = isHttpUrl(opts?.imageUrl) ? (opts!.imageUrl as string) : '';
+  if (!useUrl && (!localPath || !fs.existsSync(localPath))) {
     return { text: '', note: '文件不存在', via: 'none' };
   }
   if (!vision.configured()) {
@@ -258,7 +285,7 @@ export async function ocrImageText(
       },
       {
         type: 'image_url',
-        image_url: { url: vision.fileToDataUrl(localPath, maxSide, quality) },
+        image_url: { url: pickImageUrl(vision, useUrl || undefined, localPath, maxSide, quality) },
       },
     ];
     const hangtagTimeout =
@@ -266,8 +293,9 @@ export async function ocrImageText(
       (opts?.hangtag
         ? parseInt(process.env.VISION_HANGTAG_TIMEOUT_MS || '90000', 10)
         : undefined);
+    // 思考型模型的 reasoning 计入输出预算：直接用模型最大输出 tokens，避免 content 被挤空
     const content = await vision.chat(parts, {
-      maxTokens: 900,
+      maxTokens: vision.maxOutputTokens,
       temperature: 0,
       timeoutMs: hangtagTimeout,
     });
@@ -381,6 +409,8 @@ export interface PublishRoleClassifyItem {
   mediaId: string;
   localPath: string;
   filename?: string;
+  /** 公网图 URL（OSS 直链），有则优先于 base64 */
+  url?: string;
 }
 
 export interface PublishRoleClassifyResult {
@@ -398,7 +428,9 @@ export async function classifyPublishImageRoles(
   vision: VisionClient,
   items: PublishRoleClassifyItem[],
 ): Promise<PublishRoleClassifyResult[]> {
-  const pool = (items || []).filter((it) => it?.localPath && fs.existsSync(it.localPath)).slice(0, 12);
+  const pool = (items || [])
+    .filter((it) => it && ((it.url && isHttpUrl(it.url)) || (it.localPath && fs.existsSync(it.localPath))))
+    .slice(0, 12);
   if (!pool.length) return [];
   if (!vision.configured()) return [];
   try {
@@ -426,14 +458,14 @@ export async function classifyPublishImageRoles(
     for (let i = 0; i < pool.length; i++) {
       parts.push({
         type: 'text',
-        text: `index=${i} file=${pool[i].filename || path.basename(pool[i].localPath)} id=${pool[i].mediaId}`,
+        text: `index=${i} file=${pool[i].filename || path.basename(pool[i].localPath || '')} id=${pool[i].mediaId}`,
       });
       parts.push({
         type: 'image_url',
-        image_url: { url: vision.fileToDataUrl(pool[i].localPath, 1024, 75) },
+        image_url: { url: pickImageUrl(vision, pool[i].url, pool[i].localPath, 1024, 75) },
       });
     }
-    const content = await vision.chat(parts, { maxTokens: 800, temperature: 0 });
+    const content = await vision.chat(parts, { maxTokens: vision.maxOutputTokens, temperature: 0 });
     const parsed = parseJsonLoose(content);
     const arr = Array.isArray(parsed.items) ? parsed.items : Array.isArray(parsed) ? parsed : [];
     const out: PublishRoleClassifyResult[] = [];

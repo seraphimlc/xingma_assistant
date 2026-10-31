@@ -379,6 +379,8 @@ async function tryOcr(
     hangtag?: boolean;
     /** 跳过多模态，直接本地 OCR（吊牌超时后的强制兜底） */
     forceLocal?: boolean;
+    /** 公网图 URL（OSS 直链），有则优先于 base64 */
+    imageUrl?: string;
   },
 ): Promise<{
   text: string;
@@ -395,6 +397,7 @@ async function tryOcr(
     try {
       const mm = await ocrImageText(opts.vision, localPath, {
         hangtag: opts.hangtag,
+        imageUrl: opts?.imageUrl,
       });
       if (mm.text) {
         let combined = mm.text;
@@ -700,6 +703,7 @@ export async function buildPublishSuggestion(
             stripHint:
               meta?.width && meta?.height && meta.width > meta.height * 1.3 ? 16 : undefined,
             vision: opts?.vision,
+            imageUrl: a.url,
           });
           if (r.used) ocrUsed = true;
           if (r.text) ocrMap.set(a.mediaId, r.text);
@@ -791,6 +795,7 @@ export async function buildPublishSuggestion(
           mediaId: a.mediaId,
           localPath: a.localPath,
           filename: a.filename,
+          url: a.url,
         })),
       );
       for (const c of classified) {

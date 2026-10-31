@@ -174,6 +174,7 @@ export function registerPublishProductHandler(
         localPath: a.localPath,
         filename: a.filename,
         roleHint: img?.role,
+        url: a.url,
       };
     });
     const cover = await selectCoverImage(vision, cands);
@@ -207,17 +208,23 @@ export function registerPublishProductHandler(
       await ctx.updateProgress({ percent: 50, step: 'title', message: 'Vision 生成标题' });
       const coverAsset = batch.assets.find((a) => a.mediaId === cover.coverId);
       const titlePaths: string[] = [];
-      if (coverAsset?.localPath) titlePaths.push(coverAsset.localPath);
+      const titleUrls: string[] = [];
+      const pushTitle = (a?: { localPath?: string; url?: string } | null) => {
+        if (a?.localPath && !titlePaths.includes(a.localPath)) {
+          titlePaths.push(a.localPath);
+          titleUrls.push(a.url || '');
+        }
+      };
+      pushTitle(coverAsset);
       for (const a of batch.assets) {
         const im = suggestion.images?.find((i) => i.mediaId === a.mediaId);
         if (im && (im.role === 'hangtag' || im.role === 'size_chart' || im.role === 'lab_report' || im.role === 'packaging')) continue;
-        if (a.localPath && !titlePaths.includes(a.localPath)) titlePaths.push(a.localPath);
+        pushTitle(a);
       }
-      if (!titlePaths.length && batch.assets[0]?.localPath) {
-        titlePaths.push(batch.assets[0].localPath);
-      }
+      if (!titlePaths.length) pushTitle(batch.assets[0]);
       const gen = await generateProductTitle(vision, titlePaths.slice(0, 4), {
         styleNo: ocrStyleNo || undefined,
+        urls: titleUrls.slice(0, 4),
       });
       name = gen.title;
       if (gen.subtitle) subtitle = gen.subtitle;
@@ -249,17 +256,27 @@ export function registerPublishProductHandler(
     if (isPlaceholderColorList(colors) || colorSource === 'placeholder') {
       await ctx.updateProgress({ percent: 58, step: 'colors', message: 'Vision 估色' });
       const colorPaths: string[] = [];
+      const colorUrls: string[] = [];
       const preferRoles = new Set(['multi_color', 'main', 'on_model']);
       for (const a of batch.assets) {
         const im = suggestion.images?.find((i) => i.mediaId === a.mediaId);
-        if (im && preferRoles.has(im.role)) colorPaths.push(a.localPath);
+        if (im && preferRoles.has(im.role)) {
+          colorPaths.push(a.localPath);
+          colorUrls.push(a.url || '');
+        }
       }
-      const coverPath = batch.assets.find((a) => a.mediaId === cover.coverId)?.localPath;
-      if (coverPath && !colorPaths.includes(coverPath)) colorPaths.unshift(coverPath);
+      const coverAssetForColor = batch.assets.find((a) => a.mediaId === cover.coverId);
+      if (coverAssetForColor?.localPath && !colorPaths.includes(coverAssetForColor.localPath)) {
+        colorPaths.unshift(coverAssetForColor.localPath);
+        colorUrls.unshift(coverAssetForColor.url || '');
+      }
       if (!colorPaths.length) {
-        colorPaths.push(...batch.assets.slice(0, 3).map((a) => a.localPath));
+        for (const a of batch.assets.slice(0, 3)) {
+          colorPaths.push(a.localPath);
+          colorUrls.push(a.url || '');
+        }
       }
-      const est = await estimateGarmentColors(vision, colorPaths);
+      const est = await estimateGarmentColors(vision, colorPaths, colorUrls);
       if (est.colors.length) {
         colors = est.colors;
         colorSource = 'vision';

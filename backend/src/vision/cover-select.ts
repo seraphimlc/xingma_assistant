@@ -8,6 +8,8 @@ export interface CoverCandidate {
   localPath: string;
   filename?: string;
   roleHint?: string;
+  /** 公网图 URL（OSS 直链），有则优先于 base64 */
+  url?: string;
 }
 
 export interface CoverSelectResult {
@@ -111,10 +113,15 @@ async function visionPickOne(
     });
     parts.push({
       type: 'image_url',
-      image_url: { url: vision.fileToDataUrl(pool[i].localPath) },
+      image_url: {
+        url:
+          pool[i].url && /^https?:\/\//.test(pool[i].url!)
+            ? pool[i].url!
+            : vision.fileToDataUrl(pool[i].localPath),
+      },
     });
   }
-  const content = await vision.chat(parts, { maxTokens: 400 });
+  const content = await vision.chat(parts, { maxTokens: vision.maxOutputTokens });
   const parsed = parseJsonLoose(content);
   let idx = Number(parsed.best_index);
   if (!Number.isInteger(idx) || idx < 0 || idx >= pool.length) {

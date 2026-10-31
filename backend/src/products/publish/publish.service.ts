@@ -574,7 +574,7 @@ export class PublishService implements OnModuleInit {
     const mimeType = file.mimetype || 'image/jpeg';
     const url = await this.oss.putObjectSafe(file.buffer, objectKey, mimeType);
 
-    const ocr = await ocrImageText(this.vision, localPath, { hangtag: true });
+    const ocr = await ocrImageText(this.vision, localPath, { hangtag: true, imageUrl: url });
     const text = String(ocr.text || '');
     const fields = parseBracketFields(text);
     let styleNo = extractStyleNo(text, []);
