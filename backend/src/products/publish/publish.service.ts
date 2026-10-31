@@ -16,7 +16,15 @@ import { AuditService } from '../../common/audit.service';
 import { MediaAsset } from '../../common/entities/media-asset.entity';
 import { newId } from '../../common/utils/id';
 import { ProductsService } from '../products.service';
-import { buildPublishSuggestion } from './publish-analyze';
+import {
+  buildPublishSuggestion,
+  extractColorsFromText,
+  extractMaterial,
+  extractSizeText,
+  extractStyleNo,
+  normalizeColorList,
+  parseBracketFields,
+} from './publish-analyze';
 import {
   ConfirmPublishInput,
   PublishBatch,
@@ -28,7 +36,7 @@ import { buildJobDisplayTitle } from '../../jobs/job-display-title';
 import { VisionClient } from '../../vision/vision.client';
 import { OssClient } from '../../media/oss.client';
 import { registerPublishProductHandler } from '../../jobs/handlers/publish-product.handler';
-import { provisionalStyleNo } from '../../vision/publish-vision';
+import { provisionalStyleNo, ocrImageText, isProvisionalStyleNo } from '../../vision/publish-vision';
 import { LevelsService } from '../../levels/levels.service';
 import { ProductGroupsService } from '../product-groups.service';
 
@@ -469,44 +477,136 @@ export class PublishService implements OnModuleInit {
   }
 
   /**
-   * 识别失败：删除入队时占位商品，避免临时款号冒充正式商品。
+   * 待补全：OCR 未识别出款号时保留商品（off_sale + needReview 标记），
+   * 图集与封面保持可用，等用户在编辑页补录款号/颜色等信息。
    */
-  async discardUnrecognizedProduct(user: AuthContext, productId: string) {
-    if (!productId) return { ok: true, deleted: false };
-    try {
-      await this.products.remove(user, productId); // 现实现=下架；再尽量硬删占位
-    } catch (e: any) {
-      this.logger.warn(`discard soft-off failed productId=${productId}: ${String(e?.message || e).slice(0, 120)}`);
+  async markPendingCompletion(
+    user: AuthContext,
+    input: {
+      batchId: string;
+      productId: string;
+      name: string;
+      material?: string | null;
+      description?: string | null;
+      levelId?: string;
+      priceDisplay?: 'show' | 'hide';
+      coverMediaIds?: string[];
+      reviewReasons?: string[];
+      failureReason?: string;
+    },
+  ) {
+    const batch = this.getBatch(user.tenantId, input.batchId);
+    const productId = input.productId;
+    if (!productId) throw new BadRequestException('缺少 productId');
+
+    const existing = await this.products.getDetail(user, productId);
+    if (!existing) throw new NotFoundException('商品不存在');
+    const tags = new Set<string>(((existing as any).tags as string[]) || []);
+    tags.add('needReview');
+    tags.add('待补信息');
+    tags.add('provisionalStyleNo');
+    for (const r of input.reviewReasons || []) tags.add(`review:${r}`);
+
+    // 封面优先（识别结果），其余批次图保持原有顺序
+    const batchIds = (batch.assets || []).map((a) => a.mediaId);
+    const coverMediaIds = [...(input.coverMediaIds || []), ...batchIds]
+      .filter(Boolean)
+      .filter((id, i, arr) => arr.indexOf(id) === i);
+
+    const product = await this.products.update(user, productId, {
+      name: input.name?.trim() || '待补信息',
+      material: input.material?.trim() || null,
+      description: input.description || null,
+      levelId: input.levelId,
+      priceDisplay: input.priceDisplay || 'show',
+      status: 'off_sale',
+      tags: [...tags],
+      coverMediaIds,
+    } as any);
+
+    this.batchStore.delete(batch.tenantId, batch.batchId);
+    this.logger.log(
+      `pendingCompletion productId=${productId} batchId=${input.batchId} ` +
+        `reason=${input.failureReason || '-'} reviewReasons=${(input.reviewReasons || []).join(',') || '-'}`,
+    );
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'publish.pending_completion',
+      targetType: 'product',
+      targetId: productId,
+      detail: {
+        batchId: input.batchId,
+        reviewReasons: input.reviewReasons || [],
+        failureReason: input.failureReason || null,
+      },
+    });
+    return product;
+  }
+
+  /**
+   * 待补全商品：上传单张吊牌图 OCR，返回建议字段（款号/颜色/材质/尺码）。
+   * 传 productId 时吊牌图同时挂进商品图集。
+   */
+  async hangtagAnalyze(
+    user: AuthContext,
+    file: Express.Multer.File | undefined,
+    body?: { productId?: string },
+  ) {
+    if (!file || !file.buffer?.length) throw new BadRequestException('请上传吊牌图片');
+    const productId = String(body?.productId || '').trim();
+
+    let styleDir: string | null = null;
+    if (productId) {
+      const detail = await this.products.getDetail(user, productId);
+      if (!detail) throw new NotFoundException('商品不存在');
+      styleDir = String((detail as any).styleNo || '').trim();
     }
-    if (this.dataSource && process.env.DB_ENABLED === 'true') {
-      try {
-        await this.dataSource.query(
-          'DELETE FROM product_skus WHERE tenant_id = ? AND product_id = ?',
-          [user.tenantId, productId],
-        );
-        await this.dataSource.query(
-          'UPDATE media_assets SET product_id = NULL WHERE tenant_id = ? AND product_id = ?',
-          [user.tenantId, productId],
-        );
-        await this.dataSource.query(
-          'DELETE FROM products WHERE tenant_id = ? AND id = ?',
-          [user.tenantId, productId],
-        );
-        this.logger.log(`discardUnrecognizedProduct hard-deleted productId=${productId}`);
-        this.audit.enqueue({
-          tenantId: user.tenantId,
-          actor: user,
-          action: 'publish.discard_unrecognized',
-          targetType: 'product',
-          targetId: productId,
-          detail: { hardDeleted: true },
-        });
-        return { ok: true, deleted: true };
-      } catch (e: any) {
-        this.logger.warn(`discard hard-delete failed productId=${productId}: ${String(e?.message || e).slice(0, 160)}`);
-      }
+    const ext = path.extname(file.originalname || '') || this.extFromMime(file.mimetype) || '.jpg';
+    const stamp = Date.now();
+    const relDir = styleDir
+      ? `tenants/${user.tenantId}/products/${styleDir}`
+      : `tenants/${user.tenantId}/hangtag`;
+    const objectKey = `${relDir}/hangtag_${stamp}${ext}`;
+    const localPath = path.join(this.storageRoot(), relDir, `hangtag_${stamp}${ext}`);
+    fs.mkdirSync(path.dirname(localPath), { recursive: true });
+    fs.writeFileSync(localPath, file.buffer);
+    const mimeType = file.mimetype || 'image/jpeg';
+    const url = await this.oss.putObjectSafe(file.buffer, objectKey, mimeType);
+
+    const ocr = await ocrImageText(this.vision, localPath, { hangtag: true });
+    const text = String(ocr.text || '');
+    const fields = parseBracketFields(text);
+    let styleNo = extractStyleNo(text, []);
+    if (styleNo && isProvisionalStyleNo(styleNo)) styleNo = '';
+    const colors = normalizeColorList(extractColorsFromText(text));
+    const material = extractMaterial(text, fields);
+    const sizeText = extractSizeText(text, fields);
+    const name =
+      String(fields['品名'] || fields['款式'] || '').trim() ||
+      (styleNo ? `款号 ${styleNo}` : '');
+
+    let mediaId: string | null = null;
+    if (productId) {
+      mediaId = await this.insertMediaAsset(user.tenantId, {
+        objectKey,
+        mimeType,
+        sizeBytes: file.size || file.buffer.length,
+      });
+      await this.updateMediaAsset(user.tenantId, mediaId, { productId });
+      this.logger.log(`hangtagAnalyze attach productId=${productId} mediaId=${mediaId} ocr=${ocr.via}`);
     }
-    return { ok: true, deleted: false };
+
+    return {
+      styleNo: styleNo || null,
+      name: name || null,
+      colors,
+      material: material || null,
+      sizeText: sizeText || null,
+      ocrNote: ocr.note || null,
+      mediaId,
+      url,
+    };
   }
 
     async analyze(user: AuthContext, batchId: string, body?: { runOcr?: boolean }) {

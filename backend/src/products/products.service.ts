@@ -629,6 +629,20 @@ export class ProductsService {
     if (input.levelId) {
       await this.levels.getProductLevel(user.tenantId, input.levelId);
     }
+    // 待补全商品补录保存：清除 needReview / 待补信息 / provisionalStyleNo / review:* 标记
+    if ((input as any).clearReviewTags) {
+      const cur = await this.repo.findById(user.tenantId, id);
+      if (!cur) throw new NotFoundException('商品不存在');
+      const cleaned = (((cur as any).tags as string[]) || []).filter(
+        (t) =>
+          t !== 'needReview' &&
+          t !== 'provisionalStyleNo' &&
+          t !== '待补信息' &&
+          !String(t).startsWith('review:'),
+      );
+      (input as any).tags = cleaned;
+      delete (input as any).clearReviewTags;
+    }
     if (input.coverMediaIds) {
       const existing = await this.repo.findById(user.tenantId, id);
       if (!existing) throw new NotFoundException('商品不存在');

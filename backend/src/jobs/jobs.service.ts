@@ -1018,8 +1018,11 @@ export class JobsService {
 
   async markSucceeded(job: JobEntity, result: Record<string, unknown>) {
     const rr = (result || {}) as Record<string, any>;
+    // 待补全：发品未识别出款号但商品已保留（off_sale+needReview），任务按成功收尾
+    const pendingPublish = job.type === 'publish_product' && rr.pendingCompletion === true;
     const unrecognized =
       job.type === 'publish_product' &&
+      !pendingPublish &&
       (rr.recognized === false || rr.outcome === '未识别出商品' || rr.styleNoProvisional === true);
     job.result = result;
     job.finishedAt = new Date();
@@ -1060,7 +1063,12 @@ export class JobsService {
       ...prev,
       percent: 100,
       step: 'done',
-      message: done != null && total != null ? `已完成 ${done}/${total}` : '已完成',
+      message: pendingPublish
+        ? `待补全：${String(rr.failureReason || '未识别到吊牌款号').slice(0, 60)}`
+        : done != null && total != null
+          ? `已完成 ${done}/${total}`
+          : '已完成',
+      ...(pendingPublish ? { failureReason: String(rr.failureReason || '').slice(0, 200) } : {}),
       ...(done != null ? { done } : {}),
       ...(total != null ? { total } : {}),
     };
@@ -1259,11 +1267,14 @@ export class JobsService {
     const payload = summarizePayload(rec.type, rec.input) as Record<string, any>;
     const resultRec = { ...((rec.result || {}) as Record<string, any>) };
     const unrecognizedPublish = isUnrecognizedPublishResult(rec.type, resultRec);
+    // 待补全：任务成功但商品等人工补录（不显示临时 V 款号）
+    const pendingPublish =
+      rec.type === 'publish_product' && resultRec.pendingCompletion === true && !unrecognizedPublish;
     const resultStyleNo = String(
       resultRec?.styleNo || resultRec?.product?.styleNo || '',
     ).trim();
-    // 识别失败：任何位置不得出现款号（含临时 V 号）
-    if (unrecognizedPublish) {
+    // 识别失败/待补全：任何位置不得出现款号（含临时 V 号）
+    if (unrecognizedPublish || pendingPublish) {
       delete payload.styleNo;
       delete payload.draftStyleNo;
       if (payload.displayTitle && /款号|识别中|草稿|V\d{12}/i.test(String(payload.displayTitle))) {
@@ -1275,7 +1286,7 @@ export class JobsService {
         resultRec.product = { ...resultRec.product, styleNo: null };
       }
     }
-    const styleNo = unrecognizedPublish
+    const styleNo = unrecognizedPublish || pendingPublish
       ? ''
       : resultStyleNo ||
         String(payload.styleNo || payload.draftStyleNo || '').trim() ||
@@ -1287,6 +1298,11 @@ export class JobsService {
       if (unrecognizedPublish) {
         titleInput.recognized = false;
         titleInput.outcome = '未识别出商品';
+        delete titleInput.styleNo;
+        delete titleInput.draftStyleNo;
+      } else if (pendingPublish) {
+        titleInput.pendingCompletion = true;
+        titleInput.outcome = '待补全信息';
         delete titleInput.styleNo;
         delete titleInput.draftStyleNo;
       } else if (resultStyleNo) {
@@ -1546,6 +1562,8 @@ function dedupePromoJobs<T extends {
 function isUnrecognizedPublishResult(type: string, result: Record<string, any> | null | undefined): boolean {
   if (type !== 'publish_product') return false;
   const rr = result || {};
+  // 待补全不算识别失败：商品已保留，仅待人工补录
+  if (rr.pendingCompletion === true) return false;
   return (
     rr.recognized === false ||
     rr.outcome === '未识别出商品' ||

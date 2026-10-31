@@ -118,6 +118,22 @@ export class PublishController {
     return this.publish.analyze(user, batchId, body);
   }
 
+  /** 待补全商品：上传单张吊牌图 OCR，返回建议字段；传 productId 时吊牌图挂进商品图集 */
+  @Post('hangtag-analyze')
+  @UseInterceptors(
+    FilesInterceptor('file', 1, {
+      storage: memoryStorage(),
+      limits: { fileSize: 12 * 1024 * 1024 },
+    }),
+  )
+  hangtagAnalyze(
+    @AuthUser() user: AuthContext,
+    @UploadedFiles() files: Express.Multer.File[],
+    @Body() body: { productId?: string },
+  ) {
+    return this.publish.hangtagAnalyze(user, files?.[0], body);
+  }
+
   /** 确认发品：创建商品 + 一色一 SKU（size=null） */
   @Post('confirm')
   confirm(@AuthUser() user: AuthContext, @Body() body: ConfirmPublishInput) {

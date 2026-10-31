@@ -37,9 +37,17 @@ function enrich(j) {
       res.outcome === '未识别出商品' ||
       res.styleNoProvisional === true ||
       (j.status === 'failed' && /识别失败|未识别/.test(String(j.error || (j.progress && j.progress.message) || ''))));
+  // 待补全：商品已保留（下架+待补标记），点「查看」进编辑页补录
+  const pubPending =
+    j.type === 'publish_product' &&
+    !pubFail &&
+    (res.pendingCompletion === true || res.outcome === '待补全信息');
   if (pubFail) {
     statusLabel = '识别失败';
     tone = 'err';
+  } else if (pubPending) {
+    statusLabel = '待补全';
+    tone = 'warn';
   } else if (j.type === 'publish_product' && j.status === 'succeeded') {
     statusLabel = '已完成';
   }
@@ -103,6 +111,7 @@ function enrich(j) {
     retryLabel,
     isOrphan,
     orphanPromoSet: isOrphan,
+    pendingCompletion: pubPending,
     productId,
     setId,
     styleNo,
@@ -276,6 +285,11 @@ Page({
     const pid = productId || row.productId || '';
     const sid = setId || row.setId || '';
     const gen = isGen || row.isGenType;
+    // 待补全：直接进商品编辑页补录款号/颜色
+    if (row.pendingCompletion && pid) {
+      wx.navigateTo({ url: `/pages/product/edit/edit?id=${pid}` });
+      return;
+    }
     // 失败/取消：进任务详情（有「重新生成」）
     const needJobOps = row.status === 'failed' || row.status === 'cancelled';
     if (needJobOps && id) {

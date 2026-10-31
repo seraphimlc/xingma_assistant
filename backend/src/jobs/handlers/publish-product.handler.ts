@@ -68,53 +68,6 @@ function humanPublishFailureReason(opts: {
   return '未识别出商品';
 }
 
-async function failUnrecognized(
-  publish: PublishService,
-  user: AuthContext,
-  productId: string,
-  jobId: string,
-  opts: {
-    failureReason: string;
-    reviewReasons: string[];
-    cover?: { coverId?: string; via?: string; reason?: string };
-    titleSource?: TitleSuggestionSource;
-    colorSource?: ColorSuggestionSource;
-    colorSourceNote?: string;
-    subtitle?: string;
-    sourceMediaIds?: string[];
-    sourceImages?: Array<{ mediaId: string; url?: string; filename?: string; role?: string }>;
-  },
-) {
-  await publish.discardUnrecognizedProduct(user, productId);
-  logger.log(
-    `unrecognized jobId=${jobId} productId=${productId} discarded reason=${opts.failureReason}`,
-  );
-  return {
-    recognized: false,
-    outcome: '未识别出商品',
-    failureReason: opts.failureReason,
-    productId: null,
-    styleNo: null,
-    draftStyleNo: null,
-    name: null,
-    subtitle: opts.subtitle || null,
-    titleSource: opts.titleSource || 'fallback',
-    colorSource: opts.colorSource || 'placeholder',
-    colorSourceNote: opts.colorSourceNote || '',
-    coverMediaId: opts.cover?.coverId || null,
-    coverVia: opts.cover?.via || null,
-    coverReason: opts.cover?.reason || null,
-    skuCount: 0,
-    styleNoProvisional: true,
-    needReview: true,
-    reviewReasons: opts.reviewReasons,
-    status: null,
-    highComplete: false,
-    sourceMediaIds: opts.sourceMediaIds || [],
-    sourceImages: opts.sourceImages || [],
-  };
-}
-
 
 export function registerPublishProductHandler(
   jobs: JobsService,
@@ -158,7 +111,7 @@ export function registerPublishProductHandler(
       };
     });
 
-    // 锁定规则：批次命中任意 1/8 类即可；全部 unknown → 识别失败（不造假商品）
+    // 锁定规则：批次命中任意 1/8 类即可；全部 unknown → 同样转待补全（图保留，人工核对）
     const recognizedImages = (suggestion.images || []).filter((i) =>
       isRecognizedPublishImageRole(i.role),
     );
@@ -170,15 +123,42 @@ export function registerPublishProductHandler(
       const failZh = /自拍|风景|餐饮|聊天|截图|宠物|非服装|不是衣服/.test(blob)
         ? REASON_ZH.not_garment_material
         : REASON_ZH.no_product_material;
-      return failUnrecognized(publish, user, productId, job.id, {
-        failureReason: failZh,
+      const levelId = String(
+        job.input.levelId || process.env.DEFAULT_PRODUCT_LEVEL_ID || 'pl_open',
+      );
+      const product = await publish.markPendingCompletion(user, {
+        batchId,
+        productId,
+        name: String(job.input.name || '').trim() || '待补信息',
+        material: suggestion.material || null,
+        description: null,
+        levelId,
+        priceDisplay: (job.input.priceDisplay as any) || 'show',
         reviewReasons: reasons,
-        subtitle: suggestion.subtitle,
-        colorSource: suggestion.colorSource,
-        colorSourceNote: suggestion.colorSourceNote,
+        failureReason: failZh,
+      });
+      logger.log(
+        `pendingCompletion(taxonomy) jobId=${job.id} productId=${productId} reason=${failZh}`,
+      );
+      return {
+        recognized: false,
+        pendingCompletion: true,
+        outcome: '待补全信息',
+        failureReason: failZh,
+        productId: (product as any)?.id || productId,
+        styleNo: null,
+        draftStyleNo: String(job.input.draftStyleNo || '').trim() || null,
+        name: (product as any)?.name || null,
+        subtitle: suggestion.subtitle || null,
+        skuCount: 0,
+        styleNoProvisional: true,
+        needReview: true,
+        reviewReasons: reasons,
+        status: 'off_sale',
+        highComplete: false,
         sourceMediaIds,
         sourceImages,
-      });
+      };
     }
     logger.log(
       `taxonomy jobId=${job.id} hit=${recognizedImages.length}/${(suggestion.images || []).length} ` +
@@ -405,7 +385,7 @@ export function registerPublishProductHandler(
     suggestion.reviewReasons = reviewReasons;
     batch.suggestion = suggestion;
 
-    // 无正式吊牌款号 = 未识别出商品：丢弃入队占位；仅有非吊牌 8 类也不造 SKU
+    // 无正式吊牌款号 = 转待补全：保留商品（off_sale + needReview），仅有非吊牌 8 类同样转待补全
     if (!styleOk) {
       const hasHangtagImg = (suggestion.images || []).some((i) => i.role === 'hangtag');
       const hangtagOcr = (suggestion.images || [])
@@ -439,20 +419,53 @@ export function registerPublishProductHandler(
             ? REASON_ZH.hangtag_unclear
             : REASON_ZH.missing_style_no,
       });
-      return failUnrecognized(publish, user, productId, job.id, {
-        failureReason,
+      // 待补全：保留商品（off_sale + needReview），款号等由用户在编辑页补录
+      const levelId = String(
+        job.input.levelId || process.env.DEFAULT_PRODUCT_LEVEL_ID || 'pl_open',
+      );
+      const product = await publish.markPendingCompletion(user, {
+        batchId,
+        productId,
+        name,
+        material: suggestion.material || null,
+        description: suggestion.description || null,
+        levelId,
+        priceDisplay: (job.input.priceDisplay as any) || 'show',
+        coverMediaIds,
         reviewReasons,
-        cover: { coverId: cover.coverId, via: cover.via, reason: cover.reason },
+        failureReason,
+      });
+      logger.log(
+        `pendingCompletion jobId=${job.id} productId=${productId} draft=${draftStyleNo || '-'} reason=${failureReason}`,
+      );
+      return {
+        recognized: false,
+        pendingCompletion: true,
+        outcome: '待补全信息',
+        failureReason,
+        productId: (product as any)?.id || productId,
+        styleNo: null,
+        draftStyleNo: draftStyleNo || null,
+        name: (product as any)?.name || name,
+        subtitle: subtitle || null,
         titleSource,
         colorSource,
         colorSourceNote,
-        subtitle,
+        coverMediaId: cover.coverId,
+        coverVia: cover.via,
+        coverReason: cover.reason,
+        skuCount: 0,
+        styleNoProvisional: true,
+        needReview: true,
+        reviewReasons,
+        status: 'off_sale',
+        highComplete: false,
         sourceMediaIds,
         sourceImages: sourceImages.map((s) => {
           const im = suggestion.images?.find((i) => i.mediaId === s.mediaId);
           return { ...s, role: im?.role || s.role };
         }),
-      });
+      };
     }
 
     // 识别成功建品后默认在售；标题弱 / needReview 仅打标，不再自动下架。

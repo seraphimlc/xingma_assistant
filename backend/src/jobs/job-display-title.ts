@@ -74,6 +74,10 @@ function buildPromoTitle(p: Record<string, any>): string {
 }
 
 function buildPublishTitle(p: Record<string, any>): string {
+  // 待补全：商品已保留，等用户补录款号
+  if (p.pendingCompletion === true || p.outcome === '待补全信息') {
+    return '选图发品 · 待补全';
+  }
   // 未识别：禁止展示临时号/「识别中」「草稿」
   if (p.recognized === false || p.outcome === '未识别出商品') {
     return '选图发品 · 未识别出商品';

@@ -474,7 +474,7 @@ export function extractColorsFromText(text: string): string[] {
   return normalizeColorList(countColorHits(text));
 }
 
-function normalizeColorList(colors: string[]): string[] {
+export function normalizeColorList(colors: string[]): string[] {
   const out: string[] = [];
   for (let c of colors) {
     c = c.trim();
@@ -488,7 +488,7 @@ function normalizeColorList(colors: string[]): string[] {
   return out;
 }
 
-function extractStyleNo(text: string, filenames: string[]): string {
+export function extractStyleNo(text: string, filenames: string[]): string {
   const fields = parseBracketFields(text);
   if (fields['款号']) return fields['款号'].replace(/\s+/g, '');
   const m1 = text.match(/款号[：:\s]*([A-Za-z0-9\-_]{3,20})/i);
@@ -504,7 +504,7 @@ function extractStyleNo(text: string, filenames: string[]): string {
   return '';
 }
 
-function extractMaterial(text: string, fields: Record<string, string>): string {
+export function extractMaterial(text: string, fields: Record<string, string>): string {
   if (fields['成分'] || fields['材质']) return (fields['成分'] || fields['材质']).trim();
   const m = text.match(/(\d+%[^|\n]{0,40}(?:山羊绒|羊毛|桑蚕丝|腈纶|锦纶|聚酯纤维)[^|\n]{0,60})/);
   if (m) return m[1].replace(/\s+/g, ' ').trim();
@@ -518,7 +518,7 @@ function extractMaterial(text: string, fields: Record<string, string>): string {
   return '';
 }
 
-function extractSizeText(text: string, fields: Record<string, string>): string {
+export function extractSizeText(text: string, fields: Record<string, string>): string {
   if (fields['尺码']) return fields['尺码'].trim();
   const m = text.match(/尺码[：:\s]*([0-9\s\-–]+(?:CM)?)/i);
   if (m) return m[1].trim();

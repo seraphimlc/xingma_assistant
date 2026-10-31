@@ -88,3 +88,25 @@
   background: rgba(196, 92, 38, 0.92);
   color: #fff;
 }
+
+/* 待补全：款号行 + 拍吊牌识别入口 */
+.style-row { display: flex; align-items: center; gap: 16rpx; }
+.style-row .style-input { flex: 1; }
+.hangtag-btn {
+  flex-shrink: 0;
+  padding: 14rpx 22rpx;
+  border-radius: 12rpx;
+  background: #c45c26;
+  color: #fff;
+  font-size: 24rpx;
+  font-weight: 500;
+}
+.hangtag-btn.disabled { opacity: 0.6; }
+.field-warn {
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  color: #c45c26;
+  background: rgba(196, 92, 38, 0.08);
+  border-radius: 10rpx;
+  padding: 10rpx 14rpx;
+}
