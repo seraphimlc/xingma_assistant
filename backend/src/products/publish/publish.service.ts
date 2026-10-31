@@ -239,37 +239,55 @@ export class PublishService implements OnModuleInit {
       // 已在本 batch 则跳过
       if (batch.assets.some((a) => a.objectKey === objectKey)) continue;
 
-      let buffer: Buffer;
-      try {
-        buffer = await this.oss.getObjectBuffer(objectKey);
-      } catch (e: any) {
-        this.logger.warn(`from-oss get failed ${objectKey}: ${String(e?.message || e).slice(0, 160)}`);
-        throw new BadRequestException(`无法读取已上传对象: ${path.basename(objectKey)}`);
-      }
       const ext = path.extname(objectKey) || '.jpg';
-      const safeName = `${String(batch.assets.length + added.length + 1).padStart(2, '0')}_${Date.now()}${ext}`;
-      const localPath = path.join(uploadDir, safeName);
-      fs.writeFileSync(localPath, buffer);
       const mimeType =
         ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : ext === '.gif' ? 'image/gif' : 'image/jpeg';
-      const url = this.oss.publicUrl(objectKey);
+      // 默认不下载到本地（跨境 OSS 单图下载+回传要 30s+）；视觉分析走公网 URL。
+      // 需要 tesseract/Mac Vision 本地兜底时设 PUBLISH_FROM_OSS_LOCAL=1。
+      if (String(process.env.PUBLISH_FROM_OSS_LOCAL || '').trim() === '1') {
+        let buffer: Buffer;
+        try {
+          buffer = await this.oss.getObjectBuffer(objectKey);
+        } catch (e: any) {
+          this.logger.warn(`from-oss get failed ${objectKey}: ${String(e?.message || e).slice(0, 160)}`);
+          throw new BadRequestException(`无法读取已上传对象: ${path.basename(objectKey)}`);
+        }
+        const safeName = `${String(batch.assets.length + added.length + 1).padStart(2, '0')}_${Date.now()}${ext}`;
+        const localPath = path.join(uploadDir, safeName);
+        fs.writeFileSync(localPath, buffer);
+        const mediaId = await this.insertMediaAsset(user.tenantId, {
+          objectKey,
+          mimeType,
+          sizeBytes: buffer.length,
+        });
+        added.push({
+          mediaId,
+          objectKey,
+          url: this.oss.publicUrl(objectKey),
+          filename: path.basename(objectKey),
+          mimeType,
+          sizeBytes: buffer.length,
+          localPath,
+        });
+        continue;
+      }
       const mediaId = await this.insertMediaAsset(user.tenantId, {
         objectKey,
         mimeType,
-        sizeBytes: buffer.length,
+        sizeBytes: 0,
       });
       const asset: PublishBatchAsset = {
         mediaId,
         objectKey,
-        url,
+        url: this.oss.publicUrl(objectKey),
         filename: path.basename(objectKey),
         mimeType,
-        sizeBytes: buffer.length,
-        localPath,
+        sizeBytes: 0,
+        localPath: '',
       };
       added.push(asset);
       this.logger.log(
-        `from-oss batch=${batch.batchId} mediaId=${mediaId} size=${asset.sizeBytes} objectKey=${objectKey}`,
+        `from-oss(url-only) batch=${batch.batchId} mediaId=${mediaId} objectKey=${objectKey}`,
       );
     }
     batch.assets.push(...added);
@@ -812,6 +830,11 @@ export class PublishService implements OnModuleInit {
     for (const mediaId of orderIds) {
       const asset = batch.assets.find((a) => a.mediaId === mediaId);
       if (!asset) continue;
+      // OSS 直传资产（无本地文件）：不搬运不回传，保持原 objectKey/URL，仅参与封面排序
+      if (!asset.localPath || !fs.existsSync(asset.localPath)) {
+        coverMediaIds.push(asset.mediaId);
+        continue;
+      }
       idx += 1;
       const ext = path.extname(asset.localPath) || '.jpg';
       const destName = `${String(idx).padStart(2, '0')}${ext}`;

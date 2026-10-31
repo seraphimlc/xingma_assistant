@@ -393,7 +393,9 @@ async function tryOcr(
   note: string;
   engine: 'multimodal' | 'mac_vision' | 'tesseract' | 'none';
 }> {
-  if (!localPath || !fs.existsSync(localPath)) {
+  // 无本地文件但有公网 URL（OSS 直传不落地）：仍可走多模态 OCR
+  const hasHttpImg = !!opts?.imageUrl && /^https?:\/\//.test(opts.imageUrl);
+  if ((!localPath || !fs.existsSync(localPath)) && !hasHttpImg) {
     return { text: '', used: false, note: '文件不存在，跳过 OCR', engine: 'none' };
   }
 
