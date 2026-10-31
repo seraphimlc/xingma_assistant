@@ -382,6 +382,7 @@ Page({
       filePath,
       name: 'file',
       formData: { productId: this.data.id || '' },
+      timeout: 150000, // OCR 全程约 60-90s，默认 60s 会被客户端掐断
       header: {
         Authorization: token ? `Bearer ${token}` : '',
         'X-Tenant-Id': tenantId,
@@ -414,12 +415,17 @@ Page({
           patch.skus = kept.concat(r.colors.map((c) => ({ color: c, price: '' })));
         }
         if (r.styleNo) patch.styleProvisional = false;
+        const gotAny = !!(patch.styleNo || patch.name || patch.material || patch.sizeText || (Array.isArray(r.colors) && r.colors.length));
         this.setData(patch);
         if (r.mediaId && r.url) {
           // 吊牌图挂进图集（保存时随 coverMediaIds 一并提交）
           this.setData({ images: (this.data.images || []).concat([{ id: r.mediaId, url: r.url }]) });
         }
-        wx.showToast({ title: '已识别，请核对后保存', icon: 'none', duration: 2200 });
+        wx.showToast({
+          title: gotAny ? '已识别，请核对后保存' : '未识别到内容，请手动填写',
+          icon: 'none',
+          duration: 2200,
+        });
       },
       fail: () => {
         wx.showToast({ title: '吊牌识别请求失败', icon: 'none' });
