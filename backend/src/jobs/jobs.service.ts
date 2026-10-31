@@ -1098,7 +1098,8 @@ export class JobsService {
 
   /**
    * 待补全商品补录保存后：对应 publish_product 任务转「已完成」。
-   * result.pendingCompletion 置 false（列表/详情即显示已完成），并带上补全后的款号。
+   * 清掉 pendingCompletion/recognized/styleNoProvisional（否则列表仍判为识别失败），
+   * 带上补全后的款号，标题即显示「选图发品 · 款号xxx」。
    */
   async markPendingCompletionsDone(tenantId: string, productId: string, styleNo?: string | null) {
     if (!(this.dataSource && process.env.DB_ENABLED === 'true')) return;
@@ -1107,9 +1108,12 @@ export class JobsService {
         `UPDATE jobs SET
            result = JSON_SET(result,
              '$.pendingCompletion', CAST('false' AS JSON),
-             '$.outcome', '已补全',
+             '$.recognized', CAST('true' AS JSON),
+             '$.styleNoProvisional', CAST('false' AS JSON),
+             '$.outcome', '补充完成',
+             '$.failureReason', NULL,
              '$.styleNo', ?),
-           progress = JSON_SET(COALESCE(progress, JSON_OBJECT()), '$.message', '已补全信息，任务完成')
+           progress = JSON_SET(COALESCE(progress, JSON_OBJECT()), '$.message', '补充完成')
          WHERE type = 'publish_product'
            AND status = 'succeeded'
            AND JSON_EXTRACT(result, '$.pendingCompletion') = true

@@ -48,6 +48,11 @@ const COMMON_COLORS = [
   '黄色', '绿色', '蓝色', '紫色', '杏色', '裸粉', '黑', '白', '灰',
 ].sort((a, b) => b.length - a.length);
 
+/** PUBLISH_VISION_CLASSIFY=0 时跳过「8 类角色分类」Vision 调用（省时，用启发式角色） */
+export function visionClassifyEnabled(): boolean {
+  return String(process.env.PUBLISH_VISION_CLASSIFY || '').trim() !== '0';
+}
+
 /** 仅 ENABLE_MAC_VISION_OCR=1 时启用本机 macOS Vision OCR（线上 Linux 切勿开） */
 function macVisionOcrEnabled(): boolean {
   return String(process.env.ENABLE_MAC_VISION_OCR || '').trim() === '1';
@@ -786,8 +791,8 @@ export async function buildPublishSuggestion(
     }
   }
 
-  // Vision 8 类 Taxonomy：有 VISION 时覆盖/补全启发式（任意一类命中即可）
-  if (opts?.vision?.configured()) {
+  // Vision 8 类 Taxonomy：有 VISION 且未关闭时覆盖/补全启发式（任意一类命中即可）
+  if (opts?.vision?.configured() && visionClassifyEnabled()) {
     try {
       const classified = await classifyPublishImageRoles(
         opts.vision,

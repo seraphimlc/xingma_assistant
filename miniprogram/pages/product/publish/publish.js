@@ -179,20 +179,21 @@ Page({
     try {
       const meta = await this.ensurePublishMeta({ silent: false });
       const paths = this.data.localPaths.slice();
-      await startPublishUpload({
+      // 不等待图片落盘复制（大图多时数秒）；入队即跳任务中心看进度
+      startPublishUpload({
         localPaths: paths,
         levelId: meta.levelId,
         groupId: meta.groupId,
         status: 'on_sale',
         priceDisplay: 'show',
-      });
+      }).catch(() => { /* 队列内部已持久化错误并重试 */ });
       this.setData({ localPaths: [], submitting: false });
       wx.showToast({ title: '已开始上传', icon: 'success', duration: 1200 });
       setTimeout(() => {
         wx.switchTab({
-          url: '/pages/product/list/list',
+          url: '/pages/jobs/list/list',
           fail: () => {
-            wx.navigateBack({ fail: () => {} });
+            wx.switchTab({ url: '/pages/product/list/list', fail: () => {} });
           },
         });
       }, 200);

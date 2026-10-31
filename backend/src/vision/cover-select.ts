@@ -175,6 +175,12 @@ export async function selectCoverImage(
     return { ...h, reason: '未配置 VISION_API_KEY，启发式' };
   }
 
+  // PUBLISH_VISION_COVER=0：跳过 Vision 选封面，直接启发式（省时）
+  if (String(process.env.PUBLISH_VISION_COVER || '').trim() === '0') {
+    const h = heuristicPickCover(pool.length ? pool : cands);
+    return { ...h, reason: '启发式（已关闭 Vision 选封面）' };
+  }
+
   try {
     const batchSize = Math.max(2, Math.min(4, parseInt(process.env.VISION_BATCH_SIZE || '4', 10)));
     let contenders = pool.slice(0, Math.max(batchSize, parseInt(process.env.VISION_MAX_CANDIDATES || '12', 10)));

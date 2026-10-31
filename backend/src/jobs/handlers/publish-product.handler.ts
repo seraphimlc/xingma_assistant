@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import { JobsService } from '../jobs.service';
 import { JobHandler, JobRecord } from '../job.types';
 import { PublishService } from '../../products/publish/publish.service';
+import { visionClassifyEnabled } from '../../products/publish/publish-analyze';
 import { VisionClient } from '../../vision/vision.client';
 import { orderCoverMediaIds, selectCoverImage } from '../../vision/cover-select';
 import {
@@ -111,11 +112,13 @@ export function registerPublishProductHandler(
       };
     });
 
-    // 锁定规则：批次命中任意 1/8 类即可；全部 unknown → 同样转待补全（图保留，人工核对）
+    // 锁定规则：批次命中任意 1/8 类即可；全部 unknown → 同样转待补全（图保留，人工核对）。
+    // 关闭分类调用（PUBLISH_VISION_CLASSIFY=0）时只剩启发式角色，不做全 unknown 拦截，
+    // 是否建品由吊牌 OCR 款号决定。
     const recognizedImages = (suggestion.images || []).filter((i) =>
       isRecognizedPublishImageRole(i.role),
     );
-    if (!recognizedImages.length) {
+    if (visionClassifyEnabled() && !recognizedImages.length) {
       const reasons = ['no_product_material'];
       const blob = `${suggestion.ocrNote || ''} ${(suggestion.images || [])
         .map((i) => i.ocrText || '')
