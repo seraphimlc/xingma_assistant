@@ -23,6 +23,10 @@ export class VisionClient {
   get model() {
     return process.env.VISION_MODEL || 'Aerith-haiku-5.5';
   }
+  /** 模型最大输出 tokens：思考型模型的 reasoning 也计入，预算不足会导致 content 为空 */
+  get maxOutputTokens() {
+    return parseInt(process.env.VISION_MAX_OUTPUT_TOKENS || '8192', 10);
+  }
   private get timeoutMs() {
     return parseInt(process.env.VISION_TIMEOUT_MS || '60000', 10);
   }

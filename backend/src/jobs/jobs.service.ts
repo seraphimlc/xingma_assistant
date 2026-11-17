@@ -454,14 +454,14 @@ export class JobsService {
     if (query?.status) {
       items = items.filter((it) => String(it.status || '') === String(query.status));
     }
-    // 截断时优先保留排队/在做/失败，再补完成态
+    // 截断窗口时优先保留排队/在做/失败，再补完成态；展示顺序始终按创建时间倒序
     const rankKeep = (st: string) => {
       if (st === 'running' || st === 'queued') return 0;
       if (st === 'failed') return 1;
       if (st === 'cancelled') return 2;
       return 3;
     };
-    items = items
+    const pool = items
       .slice()
       .sort((a, b) => {
         const ra = rankKeep(String(a.status || ''));
@@ -469,9 +469,14 @@ export class JobsService {
         if (ra !== rb) return ra - rb;
         return Number(b.createdAt || 0) - Number(a.createdAt || 0);
       })
+      .slice(0, fetchTake);
+    // 展示分页：最新任务在前（含待补全/完成态），不再按状态分组压底
+    const page = pool
+      .slice()
+      .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
       .slice(skip, skip + take);
-    await this.enrichProductMeta(user.tenantId, items);
-    return { items, total: items.length };
+    await this.enrichProductMeta(user.tenantId, page);
+    return { items: page, total: page.length };
   }
 
   /**
@@ -1018,8 +1023,11 @@ export class JobsService {
 
   async markSucceeded(job: JobEntity, result: Record<string, unknown>) {
     const rr = (result || {}) as Record<string, any>;
+    // 待补全：发品未识别出款号但商品已保留（off_sale+needReview），任务按成功收尾
+    const pendingPublish = job.type === 'publish_product' && rr.pendingCompletion === true;
     const unrecognized =
       job.type === 'publish_product' &&
+      !pendingPublish &&
       (rr.recognized === false || rr.outcome === '未识别出商品' || rr.styleNoProvisional === true);
     job.result = result;
     job.finishedAt = new Date();
@@ -1060,7 +1068,12 @@ export class JobsService {
       ...prev,
       percent: 100,
       step: 'done',
-      message: done != null && total != null ? `已完成 ${done}/${total}` : '已完成',
+      message: pendingPublish
+        ? `待补全：${String(rr.failureReason || '未识别到吊牌款号').slice(0, 60)}`
+        : done != null && total != null
+          ? `已完成 ${done}/${total}`
+          : '已完成',
+      ...(pendingPublish ? { failureReason: String(rr.failureReason || '').slice(0, 200) } : {}),
       ...(done != null ? { done } : {}),
       ...(total != null ? { total } : {}),
     };
@@ -1081,6 +1094,40 @@ export class JobsService {
         keys: Object.keys(result || {}),
       },
     });
+  }
+
+  /**
+   * 待补全商品补录保存后：对应 publish_product 任务转「已完成」。
+   * 清掉 pendingCompletion/recognized/styleNoProvisional（否则列表仍判为识别失败），
+   * 带上补全后的款号，标题即显示「选图发品 · 款号xxx」。
+   */
+  async markPendingCompletionsDone(tenantId: string, productId: string, styleNo?: string | null) {
+    if (!(this.dataSource && process.env.DB_ENABLED === 'true')) return;
+    try {
+      await this.dataSource.query(
+        `UPDATE jobs SET
+           result = JSON_SET(result,
+             '$.pendingCompletion', CAST('false' AS JSON),
+             '$.recognized', CAST('true' AS JSON),
+             '$.styleNoProvisional', CAST('false' AS JSON),
+             '$.outcome', '补充完成',
+             '$.failureReason', NULL,
+             '$.styleNo', ?),
+           progress = JSON_SET(COALESCE(progress, JSON_OBJECT()), '$.message', '补充完成')
+         WHERE type = 'publish_product'
+           AND status = 'succeeded'
+           AND JSON_EXTRACT(result, '$.pendingCompletion') = true
+           AND (
+             JSON_UNQUOTE(JSON_EXTRACT(result, '$.productId')) = ?
+             OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.productId')) = ?
+           )`,
+        [styleNo ? String(styleNo).slice(0, 64) : null, productId, productId],
+      );
+    } catch (e: any) {
+      this.logger.warn(
+        `markPendingCompletionsDone failed productId=${productId}: ${String(e?.message || e).slice(0, 120)}`,
+      );
+    }
   }
 
   async markFailed(job: JobEntity, err: string, opts?: { requeue?: boolean; delayMs?: number }) {
@@ -1259,11 +1306,14 @@ export class JobsService {
     const payload = summarizePayload(rec.type, rec.input) as Record<string, any>;
     const resultRec = { ...((rec.result || {}) as Record<string, any>) };
     const unrecognizedPublish = isUnrecognizedPublishResult(rec.type, resultRec);
+    // 待补全：任务成功但商品等人工补录（不显示临时 V 款号）
+    const pendingPublish =
+      rec.type === 'publish_product' && resultRec.pendingCompletion === true && !unrecognizedPublish;
     const resultStyleNo = String(
       resultRec?.styleNo || resultRec?.product?.styleNo || '',
     ).trim();
-    // 识别失败：任何位置不得出现款号（含临时 V 号）
-    if (unrecognizedPublish) {
+    // 识别失败/待补全：任何位置不得出现款号（含临时 V 号）
+    if (unrecognizedPublish || pendingPublish) {
       delete payload.styleNo;
       delete payload.draftStyleNo;
       if (payload.displayTitle && /款号|识别中|草稿|V\d{12}/i.test(String(payload.displayTitle))) {
@@ -1275,7 +1325,7 @@ export class JobsService {
         resultRec.product = { ...resultRec.product, styleNo: null };
       }
     }
-    const styleNo = unrecognizedPublish
+    const styleNo = unrecognizedPublish || pendingPublish
       ? ''
       : resultStyleNo ||
         String(payload.styleNo || payload.draftStyleNo || '').trim() ||
@@ -1287,6 +1337,11 @@ export class JobsService {
       if (unrecognizedPublish) {
         titleInput.recognized = false;
         titleInput.outcome = '未识别出商品';
+        delete titleInput.styleNo;
+        delete titleInput.draftStyleNo;
+      } else if (pendingPublish) {
+        titleInput.pendingCompletion = true;
+        titleInput.outcome = '待补全信息';
         delete titleInput.styleNo;
         delete titleInput.draftStyleNo;
       } else if (resultStyleNo) {
@@ -1546,6 +1601,8 @@ function dedupePromoJobs<T extends {
 function isUnrecognizedPublishResult(type: string, result: Record<string, any> | null | undefined): boolean {
   if (type !== 'publish_product') return false;
   const rr = result || {};
+  // 待补全不算识别失败：商品已保留，仅待人工补录
+  if (rr.pendingCompletion === true) return false;
   return (
     rr.recognized === false ||
     rr.outcome === '未识别出商品' ||

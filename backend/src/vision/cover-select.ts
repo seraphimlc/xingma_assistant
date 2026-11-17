@@ -8,6 +8,8 @@ export interface CoverCandidate {
   localPath: string;
   filename?: string;
   roleHint?: string;
+  /** 公网图 URL（OSS 直链），有则优先于 base64 */
+  url?: string;
 }
 
 export interface CoverSelectResult {
@@ -111,10 +113,15 @@ async function visionPickOne(
     });
     parts.push({
       type: 'image_url',
-      image_url: { url: vision.fileToDataUrl(pool[i].localPath) },
+      image_url: {
+        url:
+          pool[i].url && /^https?:\/\//.test(pool[i].url!)
+            ? pool[i].url!
+            : vision.fileToDataUrl(pool[i].localPath),
+      },
     });
   }
-  const content = await vision.chat(parts, { maxTokens: 400 });
+  const content = await vision.chat(parts, { maxTokens: vision.maxOutputTokens });
   const parsed = parseJsonLoose(content);
   let idx = Number(parsed.best_index);
   if (!Number.isInteger(idx) || idx < 0 || idx >= pool.length) {
@@ -166,6 +173,12 @@ export async function selectCoverImage(
   if (!vision.configured()) {
     const h = heuristicPickCover(pool.length ? pool : cands);
     return { ...h, reason: '未配置 VISION_API_KEY，启发式' };
+  }
+
+  // PUBLISH_VISION_COVER=0：跳过 Vision 选封面，直接启发式（省时）
+  if (String(process.env.PUBLISH_VISION_COVER || '').trim() === '0') {
+    const h = heuristicPickCover(pool.length ? pool : cands);
+    return { ...h, reason: '启发式（已关闭 Vision 选封面）' };
   }
 
   try {

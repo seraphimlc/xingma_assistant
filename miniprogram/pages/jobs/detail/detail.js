@@ -76,8 +76,13 @@ function enrichJob(j) {
       (j.error && String(j.error).replace(/^识别失败：/, '')) ||
       '',
   ).trim();
+  // 待补全：商品已保留（下架+待补标记），等用户在编辑页补录
+  const pending =
+    isCreateType &&
+    (result.pendingCompletion === true || result.outcome === '待补全信息');
   const unrecognized =
     isCreateType &&
+    !pending &&
     (result.recognized === false ||
       result.outcome === '未识别出商品' ||
       resultProvisional ||
@@ -104,6 +109,12 @@ function enrichJob(j) {
       (String(result.subtitle || '').trim()) ||
       '未识别出商品';
     resultSummary = '识别失败';
+  } else if (isCreateType && pending) {
+    statusLabel = '待补全';
+    tone = 'warn';
+    resultSummary =
+      '商品已创建并保留图片，待补全款号、颜色等信息。点「去补全」进入编辑页，可用「拍吊牌识别」自动填写。' +
+      (failureReason ? '未识别出款号：' + failureReason + '。' : '');
   } else if (isCreateType && j.status === 'succeeded' && recognized) {
     statusLabel = '已完成';
     tone = 'ok';
@@ -124,7 +135,7 @@ function enrichJob(j) {
     failureReasonText = failureReason || String(j.error || progress.message || '识别失败').trim();
     resultSummary = '识别失败';
   }
-  const canOpenProduct = !!(isCreateType && recognized && productId);
+  const canOpenProduct = !!((isCreateType && recognized && productId) || (pending && productId));
   // 识别失败：列表/详情/结果任何位置不得出现款号（含临时 V 号）
   if (unrecognized || /^V\d{12}/i.test(String(styleNo || ''))) {
     styleNo = '';
@@ -151,15 +162,18 @@ function enrichJob(j) {
     title:
       (unrecognized
         ? '选图发品 · 未识别出商品'
-        : j.title ||
-          (j.payload && j.payload.displayTitle) ||
-          TYPE_LABEL[j.type] ||
-          '任务'),
+        : pending
+          ? '选图发品 · 待补全'
+          : j.title ||
+            (j.payload && j.payload.displayTitle) ||
+            TYPE_LABEL[j.type] ||
+            '任务'),
     statusLabel,
     tone,
     failureReasonText,
     unrecognized: !!unrecognized,
     recognized: !!recognized,
+    pendingCompletion: !!pending,
     typeLabel: TYPE_LABEL[j.type] || j.type,
     productId: unrecognized ? '' : productId,
     setId,
@@ -185,6 +199,7 @@ function enrichJob(j) {
     percent: Number(progress.percent) || 0,
     progressMessage: (() => {
       if (isCreateType && (unrecognized || statusLabel === '识别失败')) return '识别失败';
+      if (isCreateType && pending) return '待补全';
       if (isCreateType && recognized && j.status === 'succeeded') return '已完成';
       const msg = String(progress.message || '').trim();
       if (!msg) return '';
@@ -266,7 +281,8 @@ Page({
 
   openProduct() {
     const job = this.data.job || {};
-    if (!job.recognized || !job.productId) {
+    // 待补全也允许打开：直接进编辑页补录
+    if ((!job.recognized && !job.pendingCompletion) || !job.productId) {
       wx.showToast({ title: '未识别出商品，无法打开', icon: 'none' });
       return;
     }

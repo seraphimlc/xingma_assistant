@@ -1,4 +1,5 @@
 const { request } = require('../../../utils/request');
+const { uploadOneMedia } = require('../../../utils/oss-direct');
 
 function buildDescription(sizeText, description) {
   const size = (sizeText || '').trim();
@@ -54,6 +55,9 @@ Page({
     groupIndex: 0,
     images: [],
     saving: false,
+    styleProvisional: false,
+    pendingProduct: false,
+    hangtagScanning: false,
     uploading: false,
     reordering: false,
     draggingIndex: -1,
@@ -145,8 +149,15 @@ Page({
         groupIndex = latest ? groups.indexOf(latest) : 0;
       }
       const groupId = (groups[groupIndex] && groups[groupIndex].id) || p.groupId || '';
+      const tags = Array.isArray(p.tags) ? p.tags : [];
+      const styleProvisional =
+        /^V\d{12}/i.test(p.styleNo || '') || tags.indexOf('provisionalStyleNo') >= 0;
+      const pendingProduct =
+        styleProvisional || tags.indexOf('needReview') >= 0 || tags.indexOf('待补信息') >= 0;
       this.setData({
-        styleNo: p.styleNo || '',
+        styleNo: styleProvisional ? '' : (p.styleNo || ''),
+        styleProvisional,
+        pendingProduct,
         name: p.name || '',
         material: p.material || '',
         description,
@@ -347,6 +358,71 @@ Page({
     }
   },
   onStyle(e) { this.setData({ styleNo: e.detail.value }); },
+  /** 待补全商品：拍/选一张吊牌图，OCR 识别后回填表单（可改），核对后点保存 */
+  onHangtagScan() {
+    if (this.data.hangtagScanning) return;
+    wx.chooseMedia({
+      count: 1,
+      mediaType: ['image'],
+      sourceType: ['album', 'camera'],
+      success: (res) => {
+        const f = (res.tempFiles || [])[0];
+        if (f && f.tempFilePath) this.uploadHangtag(f.tempFilePath);
+      },
+    });
+  },
+  uploadHangtag(filePath) {
+    this.setData({ hangtagScanning: true });
+    wx.showLoading({ title: '上传吊牌图' });
+    (async () => {
+      try {
+        // 先直传 OSS（不经后端中转），再把 objectKey 交给后端识别
+        const up = await uploadOneMedia(filePath, {
+          purpose: 'uploads',
+          productId: this.data.id || undefined,
+          batchId: 'hangtag' + Date.now().toString(36),
+        });
+        if (!up || !up.objectKey) throw new Error('吊牌图上传失败');
+        wx.showLoading({ title: '吊牌识别中' });
+        const r = await request({
+          url: '/api/products/publish/hangtag-analyze',
+          method: 'POST',
+          data: { objectKey: up.objectKey, productId: this.data.id || '' },
+        });
+        const patch = {};
+        if (r.styleNo) patch.styleNo = r.styleNo;
+        const curName = (this.data.name || '').trim();
+        if (r.name && (!curName || curName === '待补信息' || /^款号 /.test(curName))) {
+          patch.name = r.name;
+        }
+        if (r.material) patch.material = r.material;
+        if (r.sizeText) patch.sizeText = r.sizeText;
+        if (Array.isArray(r.colors) && r.colors.length) {
+          const kept = (this.data.skus || []).filter(
+            (s) => (s.color || '').trim() && !/^色\d+$/.test(String(s.color).trim()),
+          );
+          patch.skus = kept.concat(r.colors.map((c) => ({ color: c, price: '' })));
+        }
+        if (r.styleNo) patch.styleProvisional = false;
+        const gotAny = !!(patch.styleNo || patch.name || patch.material || patch.sizeText || (Array.isArray(r.colors) && r.colors.length));
+        this.setData(patch);
+        if (r.mediaId && r.url) {
+          // 吊牌图挂进图集（保存时随 coverMediaIds 一并提交）
+          this.setData({ images: (this.data.images || []).concat([{ id: r.mediaId, url: r.url }]) });
+        }
+        wx.showToast({
+          title: gotAny ? '已识别，请核对后保存' : '未识别到内容，请手动填写',
+          icon: 'none',
+          duration: 2200,
+        });
+      } catch (e) {
+        wx.showToast({ title: String((e && e.message) || e || '吊牌识别失败').slice(0, 40), icon: 'none', duration: 2500 });
+      } finally {
+        wx.hideLoading();
+        this.setData({ hangtagScanning: false });
+      }
+    })();
+  },
   onName(e) { this.setData({ name: e.detail.value }); },
   onMaterial(e) { this.setData({ material: e.detail.value }); },
   onDesc(e) { this.setData({ description: e.detail.value }); },
@@ -523,6 +599,8 @@ Page({
       if (this.data.id) {
         const { skus, ...rest } = payload;
         rest.coverMediaIds = (this.data.images || []).map((im) => im.id).filter(Boolean);
+        // 待补全商品：保存时清除待补标记（状态按用户所选在售/下架）
+        if (this.data.pendingProduct) rest.clearReviewTags = true;
         await request({ url: `/api/products/${this.data.id}`, method: 'PATCH', data: rest });
         // 整体 upsert，勿 DELETE+POST（软删占 uk_sku 会 Duplicate entry）
         await request({
@@ -530,6 +608,7 @@ Page({
           method: 'PUT',
           data: { skus },
         });
+        this.setData({ pendingProduct: false, styleProvisional: false });
       } else {
         await request({ url: '/api/products', method: 'POST', data: payload });
       }

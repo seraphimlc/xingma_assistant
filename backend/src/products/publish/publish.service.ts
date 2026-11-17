@@ -16,7 +16,15 @@ import { AuditService } from '../../common/audit.service';
 import { MediaAsset } from '../../common/entities/media-asset.entity';
 import { newId } from '../../common/utils/id';
 import { ProductsService } from '../products.service';
-import { buildPublishSuggestion } from './publish-analyze';
+import {
+  buildPublishSuggestion,
+  extractColorsFromText,
+  extractMaterial,
+  extractSizeText,
+  extractStyleNo,
+  normalizeColorList,
+  parseBracketFields,
+} from './publish-analyze';
 import {
   ConfirmPublishInput,
   PublishBatch,
@@ -28,7 +36,7 @@ import { buildJobDisplayTitle } from '../../jobs/job-display-title';
 import { VisionClient } from '../../vision/vision.client';
 import { OssClient } from '../../media/oss.client';
 import { registerPublishProductHandler } from '../../jobs/handlers/publish-product.handler';
-import { provisionalStyleNo } from '../../vision/publish-vision';
+import { provisionalStyleNo, ocrImageText, isProvisionalStyleNo } from '../../vision/publish-vision';
 import { LevelsService } from '../../levels/levels.service';
 import { ProductGroupsService } from '../product-groups.service';
 
@@ -231,37 +239,55 @@ export class PublishService implements OnModuleInit {
       // 已在本 batch 则跳过
       if (batch.assets.some((a) => a.objectKey === objectKey)) continue;
 
-      let buffer: Buffer;
-      try {
-        buffer = await this.oss.getObjectBuffer(objectKey);
-      } catch (e: any) {
-        this.logger.warn(`from-oss get failed ${objectKey}: ${String(e?.message || e).slice(0, 160)}`);
-        throw new BadRequestException(`无法读取已上传对象: ${path.basename(objectKey)}`);
-      }
       const ext = path.extname(objectKey) || '.jpg';
-      const safeName = `${String(batch.assets.length + added.length + 1).padStart(2, '0')}_${Date.now()}${ext}`;
-      const localPath = path.join(uploadDir, safeName);
-      fs.writeFileSync(localPath, buffer);
       const mimeType =
         ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : ext === '.gif' ? 'image/gif' : 'image/jpeg';
-      const url = this.oss.publicUrl(objectKey);
+      // 默认不下载到本地（跨境 OSS 单图下载+回传要 30s+）；视觉分析走公网 URL。
+      // 需要 tesseract/Mac Vision 本地兜底时设 PUBLISH_FROM_OSS_LOCAL=1。
+      if (String(process.env.PUBLISH_FROM_OSS_LOCAL || '').trim() === '1') {
+        let buffer: Buffer;
+        try {
+          buffer = await this.oss.getObjectBuffer(objectKey);
+        } catch (e: any) {
+          this.logger.warn(`from-oss get failed ${objectKey}: ${String(e?.message || e).slice(0, 160)}`);
+          throw new BadRequestException(`无法读取已上传对象: ${path.basename(objectKey)}`);
+        }
+        const safeName = `${String(batch.assets.length + added.length + 1).padStart(2, '0')}_${Date.now()}${ext}`;
+        const localPath = path.join(uploadDir, safeName);
+        fs.writeFileSync(localPath, buffer);
+        const mediaId = await this.insertMediaAsset(user.tenantId, {
+          objectKey,
+          mimeType,
+          sizeBytes: buffer.length,
+        });
+        added.push({
+          mediaId,
+          objectKey,
+          url: this.oss.publicUrl(objectKey),
+          filename: path.basename(objectKey),
+          mimeType,
+          sizeBytes: buffer.length,
+          localPath,
+        });
+        continue;
+      }
       const mediaId = await this.insertMediaAsset(user.tenantId, {
         objectKey,
         mimeType,
-        sizeBytes: buffer.length,
+        sizeBytes: 0,
       });
       const asset: PublishBatchAsset = {
         mediaId,
         objectKey,
-        url,
+        url: this.oss.publicUrl(objectKey),
         filename: path.basename(objectKey),
         mimeType,
-        sizeBytes: buffer.length,
-        localPath,
+        sizeBytes: 0,
+        localPath: '',
       };
       added.push(asset);
       this.logger.log(
-        `from-oss batch=${batch.batchId} mediaId=${mediaId} size=${asset.sizeBytes} objectKey=${objectKey}`,
+        `from-oss(url-only) batch=${batch.batchId} mediaId=${mediaId} objectKey=${objectKey}`,
       );
     }
     batch.assets.push(...added);
@@ -469,44 +495,158 @@ export class PublishService implements OnModuleInit {
   }
 
   /**
-   * 识别失败：删除入队时占位商品，避免临时款号冒充正式商品。
+   * 待补全：OCR 未识别出款号时保留商品（off_sale + needReview 标记），
+   * 图集与封面保持可用，等用户在编辑页补录款号/颜色等信息。
    */
-  async discardUnrecognizedProduct(user: AuthContext, productId: string) {
-    if (!productId) return { ok: true, deleted: false };
-    try {
-      await this.products.remove(user, productId); // 现实现=下架；再尽量硬删占位
-    } catch (e: any) {
-      this.logger.warn(`discard soft-off failed productId=${productId}: ${String(e?.message || e).slice(0, 120)}`);
-    }
-    if (this.dataSource && process.env.DB_ENABLED === 'true') {
-      try {
-        await this.dataSource.query(
-          'DELETE FROM product_skus WHERE tenant_id = ? AND product_id = ?',
-          [user.tenantId, productId],
-        );
-        await this.dataSource.query(
-          'UPDATE media_assets SET product_id = NULL WHERE tenant_id = ? AND product_id = ?',
-          [user.tenantId, productId],
-        );
-        await this.dataSource.query(
-          'DELETE FROM products WHERE tenant_id = ? AND id = ?',
-          [user.tenantId, productId],
-        );
-        this.logger.log(`discardUnrecognizedProduct hard-deleted productId=${productId}`);
-        this.audit.enqueue({
-          tenantId: user.tenantId,
-          actor: user,
-          action: 'publish.discard_unrecognized',
-          targetType: 'product',
-          targetId: productId,
-          detail: { hardDeleted: true },
-        });
-        return { ok: true, deleted: true };
-      } catch (e: any) {
-        this.logger.warn(`discard hard-delete failed productId=${productId}: ${String(e?.message || e).slice(0, 160)}`);
+  async markPendingCompletion(
+    user: AuthContext,
+    input: {
+      batchId: string;
+      productId: string;
+      name: string;
+      material?: string | null;
+      description?: string | null;
+      levelId?: string;
+      priceDisplay?: 'show' | 'hide';
+      coverMediaIds?: string[];
+      reviewReasons?: string[];
+      failureReason?: string;
+    },
+  ) {
+    const batch = this.getBatch(user.tenantId, input.batchId);
+    const productId = input.productId;
+    if (!productId) throw new BadRequestException('缺少 productId');
+
+    const existing = await this.products.getDetail(user, productId);
+    if (!existing) throw new NotFoundException('商品不存在');
+    const tags = new Set<string>(((existing as any).tags as string[]) || []);
+    tags.add('needReview');
+    tags.add('待补信息');
+    tags.add('provisionalStyleNo');
+    for (const r of input.reviewReasons || []) tags.add(`review:${r}`);
+
+    // 封面优先（识别结果），其余批次图保持原有顺序
+    const batchIds = (batch.assets || []).map((a) => a.mediaId);
+    const coverMediaIds = [...(input.coverMediaIds || []), ...batchIds]
+      .filter(Boolean)
+      .filter((id, i, arr) => arr.indexOf(id) === i);
+
+    const product = await this.products.update(user, productId, {
+      name: input.name?.trim() || '待补信息',
+      material: input.material?.trim() || null,
+      description: input.description || null,
+      levelId: input.levelId,
+      priceDisplay: input.priceDisplay || 'show',
+      status: 'off_sale',
+      tags: [...tags],
+      coverMediaIds,
+    } as any);
+
+    this.batchStore.delete(batch.tenantId, batch.batchId);
+    this.logger.log(
+      `pendingCompletion productId=${productId} batchId=${input.batchId} ` +
+        `reason=${input.failureReason || '-'} reviewReasons=${(input.reviewReasons || []).join(',') || '-'}`,
+    );
+    this.audit.enqueue({
+      tenantId: user.tenantId,
+      actor: user,
+      action: 'publish.pending_completion',
+      targetType: 'product',
+      targetId: productId,
+      detail: {
+        batchId: input.batchId,
+        reviewReasons: input.reviewReasons || [],
+        failureReason: input.failureReason || null,
+      },
+    });
+    return product;
+  }
+
+  /**
+   * 待补全商品：吊牌图识别，返回建议字段（款号/颜色/材质/尺码）。
+   * 优先 objectKey（客户端直传 OSS 后只传 key，不经服务器中转）；
+   * 兼容 multipart file（服务器落盘 + 转存 OSS）。传 productId 时吊牌图挂进商品图集。
+   */
+  async hangtagAnalyze(
+    user: AuthContext,
+    file: Express.Multer.File | undefined,
+    body?: { productId?: string; objectKey?: string },
+  ) {
+    const productId = String(body?.productId || '').trim();
+    const keyInput = String(body?.objectKey || '').trim();
+
+    let objectKey = '';
+    let url = '';
+    let localPath = '';
+    let mimeType = 'image/jpeg';
+    let sizeBytes = 0;
+
+    if (keyInput) {
+      // 安全校验：objectKey 必须属于当前租户目录
+      if (!keyInput.startsWith(`tenants/${user.tenantId}/`)) {
+        throw new BadRequestException('objectKey 不属于当前租户');
       }
+      objectKey = keyInput;
+      url = this.oss.publicUrl(objectKey);
+      const ext = path.extname(objectKey).toLowerCase();
+      mimeType =
+        ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : ext === '.gif' ? 'image/gif' : 'image/jpeg';
+      this.logger.log(`hangtagAnalyze(url-only) productId=${productId || '-'} objectKey=${objectKey}`);
+    } else {
+      if (!file || !file.buffer?.length) throw new BadRequestException('请上传吊牌图片');
+      let styleDir: string | null = null;
+      if (productId) {
+        const detail = await this.products.getDetail(user, productId);
+        if (!detail) throw new NotFoundException('商品不存在');
+        styleDir = String((detail as any).styleNo || '').trim();
+      }
+      const ext = path.extname(file.originalname || '') || this.extFromMime(file.mimetype) || '.jpg';
+      const stamp = Date.now();
+      const relDir = styleDir
+        ? `tenants/${user.tenantId}/products/${styleDir}`
+        : `tenants/${user.tenantId}/hangtag`;
+      objectKey = `${relDir}/hangtag_${stamp}${ext}`;
+      localPath = path.join(this.storageRoot(), relDir, `hangtag_${stamp}${ext}`);
+      fs.mkdirSync(path.dirname(localPath), { recursive: true });
+      fs.writeFileSync(localPath, file.buffer);
+      mimeType = file.mimetype || 'image/jpeg';
+      sizeBytes = file.size || file.buffer.length;
+      url = await this.oss.putObjectSafe(file.buffer, objectKey, mimeType);
     }
-    return { ok: true, deleted: false };
+
+    const ocr = await ocrImageText(this.vision, localPath, { hangtag: true, imageUrl: url });
+    const text = String(ocr.text || '');
+    const fields = parseBracketFields(text);
+    let styleNo = extractStyleNo(text, []);
+    if (styleNo && isProvisionalStyleNo(styleNo)) styleNo = '';
+    const colors = normalizeColorList(extractColorsFromText(text));
+    const material = extractMaterial(text, fields);
+    const sizeText = extractSizeText(text, fields);
+    const name =
+      String(fields['品名'] || fields['款式'] || '').trim() ||
+      (styleNo ? `款号 ${styleNo}` : '');
+
+    let mediaId: string | null = null;
+    if (productId) {
+      mediaId = await this.insertMediaAsset(user.tenantId, {
+        objectKey,
+        mimeType,
+        sizeBytes,
+      });
+      await this.updateMediaAsset(user.tenantId, mediaId, { productId });
+      this.logger.log(`hangtagAnalyze attach productId=${productId} mediaId=${mediaId} ocr=${ocr.via}`);
+    }
+
+    return {
+      styleNo: styleNo || null,
+      name: name || null,
+      colors,
+      material: material || null,
+      sizeText: sizeText || null,
+      ocrNote: ocr.note || null,
+      mediaId,
+      url,
+    };
   }
 
     async analyze(user: AuthContext, batchId: string, body?: { runOcr?: boolean }) {
@@ -712,6 +852,11 @@ export class PublishService implements OnModuleInit {
     for (const mediaId of orderIds) {
       const asset = batch.assets.find((a) => a.mediaId === mediaId);
       if (!asset) continue;
+      // OSS 直传资产（无本地文件）：不搬运不回传，保持原 objectKey/URL，仅参与封面排序
+      if (!asset.localPath || !fs.existsSync(asset.localPath)) {
+        coverMediaIds.push(asset.mediaId);
+        continue;
+      }
       idx += 1;
       const ext = path.extname(asset.localPath) || '.jpg';
       const destName = `${String(idx).padStart(2, '0')}${ext}`;

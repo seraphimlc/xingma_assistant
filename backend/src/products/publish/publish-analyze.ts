@@ -48,6 +48,11 @@ const COMMON_COLORS = [
   '黄色', '绿色', '蓝色', '紫色', '杏色', '裸粉', '黑', '白', '灰',
 ].sort((a, b) => b.length - a.length);
 
+/** PUBLISH_VISION_CLASSIFY=0 时跳过「8 类角色分类」Vision 调用（省时，用启发式角色） */
+export function visionClassifyEnabled(): boolean {
+  return String(process.env.PUBLISH_VISION_CLASSIFY || '').trim() !== '0';
+}
+
 /** 仅 ENABLE_MAC_VISION_OCR=1 时启用本机 macOS Vision OCR（线上 Linux 切勿开） */
 function macVisionOcrEnabled(): boolean {
   return String(process.env.ENABLE_MAC_VISION_OCR || '').trim() === '1';
@@ -379,6 +384,8 @@ async function tryOcr(
     hangtag?: boolean;
     /** 跳过多模态，直接本地 OCR（吊牌超时后的强制兜底） */
     forceLocal?: boolean;
+    /** 公网图 URL（OSS 直链），有则优先于 base64 */
+    imageUrl?: string;
   },
 ): Promise<{
   text: string;
@@ -386,7 +393,9 @@ async function tryOcr(
   note: string;
   engine: 'multimodal' | 'mac_vision' | 'tesseract' | 'none';
 }> {
-  if (!localPath || !fs.existsSync(localPath)) {
+  // 无本地文件但有公网 URL（OSS 直传不落地）：仍可走多模态 OCR
+  const hasHttpImg = !!opts?.imageUrl && /^https?:\/\//.test(opts.imageUrl);
+  if ((!localPath || !fs.existsSync(localPath)) && !hasHttpImg) {
     return { text: '', used: false, note: '文件不存在，跳过 OCR', engine: 'none' };
   }
 
@@ -395,6 +404,7 @@ async function tryOcr(
     try {
       const mm = await ocrImageText(opts.vision, localPath, {
         hangtag: opts.hangtag,
+        imageUrl: opts?.imageUrl,
       });
       if (mm.text) {
         let combined = mm.text;
@@ -474,7 +484,7 @@ export function extractColorsFromText(text: string): string[] {
   return normalizeColorList(countColorHits(text));
 }
 
-function normalizeColorList(colors: string[]): string[] {
+export function normalizeColorList(colors: string[]): string[] {
   const out: string[] = [];
   for (let c of colors) {
     c = c.trim();
@@ -488,7 +498,7 @@ function normalizeColorList(colors: string[]): string[] {
   return out;
 }
 
-function extractStyleNo(text: string, filenames: string[]): string {
+export function extractStyleNo(text: string, filenames: string[]): string {
   const fields = parseBracketFields(text);
   if (fields['款号']) return fields['款号'].replace(/\s+/g, '');
   const m1 = text.match(/款号[：:\s]*([A-Za-z0-9\-_]{3,20})/i);
@@ -504,7 +514,7 @@ function extractStyleNo(text: string, filenames: string[]): string {
   return '';
 }
 
-function extractMaterial(text: string, fields: Record<string, string>): string {
+export function extractMaterial(text: string, fields: Record<string, string>): string {
   if (fields['成分'] || fields['材质']) return (fields['成分'] || fields['材质']).trim();
   const m = text.match(/(\d+%[^|\n]{0,40}(?:山羊绒|羊毛|桑蚕丝|腈纶|锦纶|聚酯纤维)[^|\n]{0,60})/);
   if (m) return m[1].replace(/\s+/g, ' ').trim();
@@ -518,7 +528,7 @@ function extractMaterial(text: string, fields: Record<string, string>): string {
   return '';
 }
 
-function extractSizeText(text: string, fields: Record<string, string>): string {
+export function extractSizeText(text: string, fields: Record<string, string>): string {
   if (fields['尺码']) return fields['尺码'].trim();
   const m = text.match(/尺码[：:\s]*([0-9\s\-–]+(?:CM)?)/i);
   if (m) return m[1].trim();
@@ -700,6 +710,7 @@ export async function buildPublishSuggestion(
             stripHint:
               meta?.width && meta?.height && meta.width > meta.height * 1.3 ? 16 : undefined,
             vision: opts?.vision,
+            imageUrl: a.url,
           });
           if (r.used) ocrUsed = true;
           if (r.text) ocrMap.set(a.mediaId, r.text);
@@ -782,8 +793,8 @@ export async function buildPublishSuggestion(
     }
   }
 
-  // Vision 8 类 Taxonomy：有 VISION 时覆盖/补全启发式（任意一类命中即可）
-  if (opts?.vision?.configured()) {
+  // Vision 8 类 Taxonomy：有 VISION 且未关闭时覆盖/补全启发式（任意一类命中即可）
+  if (opts?.vision?.configured() && visionClassifyEnabled()) {
     try {
       const classified = await classifyPublishImageRoles(
         opts.vision,
@@ -791,6 +802,7 @@ export async function buildPublishSuggestion(
           mediaId: a.mediaId,
           localPath: a.localPath,
           filename: a.filename,
+          url: a.url,
         })),
       );
       for (const c of classified) {
