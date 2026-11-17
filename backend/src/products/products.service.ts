@@ -281,6 +281,113 @@ export class ProductsService {
     }));
   }
 
+  /**
+   * 试衣选图。客户详情 DTO 不带 objectKey / meta。
+   * trusted 路径只在短票已校验后调用，不再做一次分享鉴权（短票里没有 shareEventId）。
+   */
+  async loadTryOnSource(
+    user: AuthContext,
+    productId: string,
+    opts?: { shareEventId?: string; boundCustomerId?: string },
+  ) {
+    const p = await this.assertProductReadable(user, productId, opts);
+    return this.tryOnSourceOf(user.tenantId, p);
+  }
+
+  async loadTryOnSourceForTicket(tenantId: string, productId: string) {
+    const p = await this.repo.findById(tenantId, productId);
+    if (!p) throw new NotFoundException('商品不存在');
+    return this.tryOnSourceOf(tenantId, p);
+  }
+
+  private async tryOnSourceOf(tenantId: string, p: ProductRec) {
+    const skus = await this.repo.listSkus(tenantId, p.id);
+    const images = await this.listTryOnImages(tenantId, p);
+    return {
+      name: p.name,
+      skus: skus.map((s) => ({ id: s.id, color: s.color, status: s.status })),
+      images,
+    };
+  }
+
+  private async listTryOnImages(tenantId: string, p: ProductRec) {
+    const coverIds = p.coverMediaIds || [];
+    if (!(this.dataSource && process.env.DB_ENABLED === 'true')) return [];
+    const repo = this.dataSource.getRepository(MediaAsset);
+    const coverRows = coverIds.length
+      ? await repo.find({ where: { tenantId, id: In(coverIds), status: 'active' } })
+      : [];
+    const productRows = await repo.find({
+      where: { tenantId, productId: p.id, status: 'active', type: 'image' },
+    });
+    const byId = new Map<string, MediaAsset>();
+    for (const r of [...coverRows, ...productRows]) byId.set(r.id, r);
+    const ordered: MediaAsset[] = [];
+    const seen = new Set<string>();
+    for (const id of coverIds) {
+      const r = byId.get(id);
+      if (r && !seen.has(r.id)) {
+        ordered.push(r);
+        seen.add(r.id);
+      }
+    }
+    for (const r of productRows) {
+      if (seen.has(r.id)) continue;
+      if (this.isPromoAsset(r)) continue;
+      ordered.push(r);
+      seen.add(r.id);
+    }
+    const meta = await this.loadMediaMeta(tenantId, ordered.map((r) => r.id));
+    return ordered.map((r, index) => ({
+      id: r.id,
+      url: this.publicUrl(r.objectKey),
+      objectKey: r.objectKey,
+      filename: path.basename(String(r.objectKey || '').split('?')[0]),
+      type: r.type || 'image',
+      mimeType: r.mimeType,
+      isPromo: this.isPromoAsset(r),
+      coverIndex: index,
+      localPath: this.safeLocalMedia(r.objectKey),
+      meta: meta.get(r.id) || null,
+    }));
+  }
+
+  /** meta 列来自迁移 015；没跑过或列不存在时退回文件名启发式。 */
+  private async loadMediaMeta(tenantId: string, ids: string[]) {
+    const out = new Map<string, Record<string, unknown> | null>();
+    if (!ids.length || !this.dataSource) return out;
+    try {
+      const placeholders = ids.map(() => '?').join(',');
+      const rows: Array<{ id: string; meta: unknown }> = await this.dataSource.query(
+        `SELECT id, meta FROM media_assets WHERE tenant_id = ? AND id IN (${placeholders})`,
+        [tenantId, ...ids],
+      );
+      for (const row of rows) {
+        let meta = row.meta;
+        if (typeof meta === 'string') {
+          try {
+            meta = JSON.parse(meta);
+          } catch {
+            meta = null;
+          }
+        }
+        out.set(row.id, meta && typeof meta === 'object' ? (meta as Record<string, unknown>) : null);
+      }
+    } catch (e: any) {
+      this.logger.warn(`tryon media meta skipped: ${String(e?.message || e).slice(0, 120)}`);
+    }
+    return out;
+  }
+
+  private safeLocalMedia(objectKey: string | null | undefined): string | undefined {
+    const raw = String(objectKey || '');
+    if (!raw || /^https?:\/\//i.test(raw) || raw.includes('..')) return undefined;
+    const root = path.resolve(this.storageRoot());
+    const abs = path.resolve(root, raw.replace(/^\/+/, ''));
+    if (abs !== root && !abs.startsWith(root + path.sep)) return undefined;
+    return fs.existsSync(abs) ? abs : undefined;
+  }
+
   private async withImages<T extends Record<string, unknown>>(tenantId: string, p: ProductRec, dto: T) {
     const images = await this.resolveImages(tenantId, p);
     return {

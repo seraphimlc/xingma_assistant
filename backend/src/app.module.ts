@@ -15,6 +15,7 @@ import { LoginModule } from './login/login.module';
 import { PromoModule } from './promo/promo.module';
 import { InvitesModule } from './invites/invites.module';
 import { JobsModule } from './jobs/jobs.module';
+import { TryonModule } from './tryon/tryon.module';
 import { TenantMiddleware } from './common/middleware/tenant.middleware';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -64,6 +65,7 @@ function buildTypeOrm(): DynamicModule {
     JobsModule,
     PromoModule,
     InvitesModule,
+    TryonModule,
   ],
   controllers: [AppController],
   providers: [AppService],

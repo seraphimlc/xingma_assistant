@@ -1,0 +1,2 @@
+<web-view wx:if="{{url}}" src="{{url}}"></web-view>
+<view wx:else class="empty">试衣链接不完整，请返回商品页重试</view>

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="referrer" content="origin" />
+  <title>试衣</title>
+  <link rel="stylesheet" href="tryon.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="top">
+      <h1 id="name">试衣</h1>
+      <p id="status">正在读取这款衣服…</p>
+    </header>
+    <section class="stage" id="stage">
+      <video id="preview" playsinline webkit-playsinline autoplay muted></video>
+      <video id="output" playsinline webkit-playsinline autoplay muted></video>
+      <p class="stage-hint" id="hint">点下方「开始试衣」后打开摄像头</p>
+    </section>
+    <p class="banner" id="banner" hidden></p>
+    <div class="chips" id="chips" role="listbox" aria-label="颜色"></div>
+    <button id="go" type="button" disabled>开始试衣</button>
+  </main>
+  <script src="vendor/decart.js"></script>
+  <script src="tryon.js"></script>
+</body>
+</html>

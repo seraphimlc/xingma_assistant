@@ -22,6 +22,7 @@
 SHA=$(git rev-parse --short HEAD)
 rsync -az --delete ./backend/src/ store-old:/srv/wool-stall-miniapp/backend/src/
 rsync -az ./backend/migrations/ store-old:/srv/wool-stall-miniapp/backend/migrations/
+rsync -az --delete ./backend/public/tryon/ store-old:/srv/wool-stall-miniapp/backend/public/tryon/
 rsync -az --delete ./docs/ store-old:/srv/wool-stall-miniapp/docs/
 # 服务器
 ssh store-old
@@ -87,6 +88,16 @@ curl -s https://xingma.visitworld.me/api/health
 - 任务列表孤儿失败组：关联 job **批量** `In(...)` 查询
 - 索引迁移：`019_list_perf_indexes.sql`（products / product_skus / promo_sets / inquiries）
 
+### 3.5 客户实时试衣（分享卡「试衣」）
+
+- 入口：`pages/product/view` 底部「试衣」（没有可用成衣图时不显示），旁边仍是「询价」
+- H5：`https://xingma.visitworld.me/tryon/`（本服务静态目录 `backend/public/tryon/`，**rsync 必须带上**，只同步 `backend/src` 不会更新页面）
+- 顾客点「试衣」后换 **10 分钟**短票放进 web-view 查询串；长效登录 JWT 不进 URL。短票不能当普通会话用
+- 点 H5「开始试衣」才向 `POST /api/tryon/tokens` 换 Decart client token。模型只有 `lucy-vton-latest`
+- 环境变量（只写名字）：`DECART_API_KEY`，或 `DECART_API_KEY_FILE`（默认 `backend/.secrets/decart.key`），可选 `DECART_API_BASE`（默认 `https://api.decart.ai`）
+- 微信：**业务域名**要含 `xingma.visitworld.me`（web-view，和 request 合法域名不是同一项）。摄像头在小程序 web-view 里失败时，H5 提示用右上角「在浏览器中打开」
+- Nginx 需另加 `location /tryon/` 反代到 `127.0.0.1:3000`（见 `部署.md`）。这次只改代码，不在生产执行 rsync / pm2
+
 ## 4. 已知缺口 / 风险（残余）
 
 | 项 | 说明 |
@@ -110,6 +121,7 @@ curl -s https://xingma.visitworld.me/api/health
 | 发品 | `products/publish/`；`jobs/handlers/publish-product.handler.ts` |
 | 宣传图/视频 | `promo/`；`pages/product/promo/` |
 | 客户/询价红点 | `customers/` `inquiries/`；`utils/customer-tab-badge.js` |
+| 客户试衣 | `backend/src/tryon/`；`backend/public/tryon/`；`pages/product/view` + `pages/product/tryon` |
 
 ## 6. 不要做的事
 

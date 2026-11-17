@@ -31,9 +31,11 @@ xingma_assistant/
 │   │   ├── jobs/              # 通用异步任务 + handlers/
 │   │   ├── media/             # 上传、签名、OSS
 │   │   ├── vision/            # 看图选封面 / 发品识图
+│   │   ├── tryon/             # 客户实时试衣：短票、选图、Decart client token
 │   │   ├── customers/ levels/ shares/ inquiries/
 │   │   └── common/entities/
 │   ├── migrations/            # 001…019 SQL
+│   ├── public/tryon/          # 试衣 H5（/tryon/，部署要单独 rsync）
 │   ├── storage/               # 本地媒体落盘（OCR/开发）
 │   └── .env.example / .secrets/（gitignore）
 └── miniprogram/
@@ -42,7 +44,7 @@ xingma_assistant/
     ├── components/sku-list/
     └── pages/
         ├── index/             # 员工登录；邀请码跳转 accept
-        ├── product/{list,detail,view,catalog,edit,publish,promo,promo-gallery}/
+        ├── product/{list,detail,view,tryon,catalog,edit,publish,promo,promo-gallery}/
         ├── customer/{list,detail}/
         ├── jobs/{list,detail}/
         ├── inquiry/{list,detail}/
@@ -115,6 +117,7 @@ npm install && npm run build && npm run start:dev
 | 商品列表/CRUD/分组 | `backend/src/products/`；`pages/product/list|edit/` |
 | 选图异步发品 / batch | `products/publish/` `jobs/handlers/publish-product.handler.ts` `vision/`；`pages/product/publish/` |
 | 客户详情 / 公开目录 | `pages/product/view/` `pages/product/catalog/`；`utils/profile.js` |
+| 客户实时试衣 | `backend/src/tryon/` `backend/public/tryon/`；`pages/product/view`「试衣」→ `pages/product/tryon` web-view |
 | 分享策略 | `products/product-access.service.ts` `shares/`；`pages/share/landing/` |
 | 宣传图 / 外部穿搭 | `backend/src/promo/`；`pages/product/promo/`；`PROMO_*` |
 | 宣传视频 / LKB | `promo/lkb-video.client.ts` `promo.service.ts`（直链入库 + 直链播放）；`promo.templates` 视频模板 |
