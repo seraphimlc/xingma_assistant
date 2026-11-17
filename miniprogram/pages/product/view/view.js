@@ -57,6 +57,7 @@ Page({
     skuRows: [],
     showSoftTip: false,
     showInquirySheet: false,
+    tryOnAvailable: false,
     showProfileSheet: false,
     contactPhone: '',
     contactName: '',
@@ -138,9 +139,58 @@ Page({
         ...skuState,
       });
       this.loadContactQr();
+      this.refreshTryOn(id, shareEventId, boundCustomerId);
     } catch (e) {
       this.setData({ error: (e && e.message) || '无权查看' });
       wx.showToast({ title: (e && e.message) || '无权查看', icon: 'none' });
+    }
+  },
+  async refreshTryOn(id, shareEventId, boundCustomerId) {
+    if (!id) {
+      this.setData({ tryOnAvailable: false });
+      return;
+    }
+    try {
+      let url = `/api/products/${id}/tryon`;
+      const qs = [];
+      if (shareEventId) qs.push(`shareEventId=${encodeURIComponent(shareEventId)}`);
+      if (boundCustomerId) qs.push(`boundCustomerId=${encodeURIComponent(boundCustomerId)}`);
+      if (qs.length) url += `?${qs.join('&')}`;
+      const data = await request({ url });
+      const colors = (data && data.colors) || [];
+      this.setData({ tryOnAvailable: !!(data && data.available && colors.length) });
+    } catch (e) {
+      this.setData({ tryOnAvailable: false });
+    }
+  },
+  async openTryOn() {
+    if (this._openingTryOn || !this.data.tryOnAvailable) return;
+    const id = this.data.id || (this.data.product && this.data.product.id);
+    if (!id) return;
+    this._openingTryOn = true;
+    wx.showLoading({ title: '打开试衣', mask: true });
+    try {
+      const data = await request({
+        url: `/api/products/${id}/tryon/ticket`,
+        method: 'POST',
+        data: {
+          shareEventId: this.data.shareEventId || undefined,
+          boundCustomerId: this.data.boundCustomerId || undefined,
+        },
+      });
+      const ticket = data && data.ticket;
+      if (!ticket) throw new Error('无法开始试衣');
+      wx.setStorageSync('tryonLaunch', { productId: id, ticket, at: Date.now() });
+      const query = `productId=${encodeURIComponent(id)}&ticket=${encodeURIComponent(ticket)}`;
+      const route = `/pages/product/tryon/tryon?${query}`;
+      wx.navigateTo({
+        url: route.length < 900 ? route : `/pages/product/tryon/tryon?productId=${encodeURIComponent(id)}`,
+      });
+    } catch (e) {
+      wx.showToast({ title: (e && e.message) || '无法开始试衣', icon: 'none' });
+    } finally {
+      this._openingTryOn = false;
+      wx.hideLoading();
     }
   },
   async loadContactQr() {

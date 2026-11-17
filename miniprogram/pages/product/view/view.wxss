@@ -178,6 +178,19 @@
   border: 2rpx solid #c45c26;
   box-sizing: border-box;
 }
+.tryon-btn {
+  flex: 1;
+  height: 88rpx;
+  line-height: 88rpx;
+  text-align: center;
+  background: #fff;
+  color: #c45c26;
+  font-size: 28rpx;
+  font-weight: 600;
+  border-radius: 44rpx;
+  border: 2rpx solid #c45c26;
+  box-sizing: border-box;
+}
 .inquire-btn {
   flex: 1;
   height: 88rpx;

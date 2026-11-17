@@ -13,6 +13,9 @@ async function bootstrap() {
   const storageRoot = join(__dirname, '..', 'storage');
   app.useStaticAssets(storageRoot, { prefix: '/media/' });
   logger.log(`本地媒体目录: ${storageRoot} → /media/ (OSS=${process.env.OSS_PROVIDER || 'mock'})`);
+  const tryOnRoot = join(__dirname, '..', 'public');
+  app.useStaticAssets(tryOnRoot, { prefix: '/', index: 'index.html' });
+  logger.log(`试衣页: ${tryOnRoot}/tryon/ → /tryon/`);
   // 骨架阶段关闭 whitelist，避免未加 class-validator 装饰器的 DTO 字段被剥掉
   app.useGlobalPipes(
     new ValidationPipe({

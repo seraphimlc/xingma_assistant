@@ -120,6 +120,10 @@ NestJS API (:3000，生产 Nginx → https://xingma.visitworld.me/api/*)
 | POST/DELETE | `/products/:id/images`… | 加图 / 删图 |
 | POST | `/products/:id/cover-media/append` | 追加 mediaIds 到 coverMediaIds 末尾（生图/视频成片；去重） |
 | POST/PATCH/DELETE | `/products/:id/skus`… | SKU |
+| GET | `/products/:id/tryon` | 客户会话或试衣短票：`{ name, available, colors:[{id,name,imageUrl}] }`。无成衣图则 `available:false` |
+| POST | `/products/:id/tryon/ticket` | 客户会话换 10 分钟短票 `{ ticket, expiresAt }`，绑定该顾客和该商品 |
+| POST | `/tryon/tokens` | 短票或会话。服务端用 `DECART_API_KEY` 向 Decart 换 client token，响应只有 `{ token, expiresAt }` |
+| GET | `/tryon/garment` | 同源输出该色成衣图（短票或会话） |
 
 ### 发品 publish
 
@@ -251,6 +255,7 @@ batch：内存 Map，TTL≈2h；主路径可不停留在确认页。
 | 视觉 | `VISION_BASE_URL` `VISION_API_KEY` `VISION_MODEL` `VISION_TIMEOUT_MS` `VISION_MAX_CANDIDATES` `VISION_OCR_CONCURRENCY` `ENABLE_MAC_VISION_OCR` |
 | 宣传视频 | `VIDEO_ENGINE=lkb|xytoken`；LKB：`VIDEO_LKB_AGENT_BASE_URL` `VIDEO_LKB_AGENT_KEY`/`KEY_FILE`/`LKB_AGENT_CALL_KEY` `VIDEO_LKB_AGENT_TENANT_ID` `VIDEO_LKB_AGENT_CODE`；xytoken 兜底：`VIDEO_GEN_*`（默认复用 VISION） |
 | 任务 | `JOB_SCHEDULER` `JOB_CONCURRENCY` `JOB_POLL_MS` `JOB_AUTO_RETRY` `JOB_STALE_MS`（默认 2700000=45min） `DEFAULT_PRODUCT_LEVEL_ID` |
+| 实时试衣 | `DECART_API_KEY` 或 `DECART_API_KEY_FILE`（默认 `.secrets/decart.key`）；可选 `DECART_API_BASE`（默认 `https://api.decart.ai`）。模型固定 `lucy-vton-latest` |
 
 生产检查：`DEV_FAKE_LOGIN=false`；`WECHAT_APP_SECRET` 或 `tenants.wx_app_secret` 已配置；`JWT_SECRET` 非默认串。
 
@@ -267,6 +272,10 @@ batch：内存 Map，TTL≈2h；主路径可不停留在确认页。
 | SKU UI | `components/sku-list` |
 
 合法域名（mp 后台）：
+
+试衣 web-view 还要在 **业务域名** 添加 `xingma.visitworld.me`（与 request 合法域名分开配置，并放好校验文件）。H5 与 API 同主机，不新增域名。
+
+
 - request = `xingma.visitworld.me`
 - uploadFile / **downloadFile** 均需：`xy-tradex.oss-cn-shenzhen.aliyuncs.com`（自有 OSS + LKB 成片同桶直链）
 - 可选保留 `xingma.visitworld.me`（本站下载 / 应急 `/api/media/external-play`）。默认播放已改回直链，不再改写为 external-play。
@@ -367,7 +376,7 @@ batch：内存 Map，TTL≈2h；主路径可不停留在确认页。
 
 **规则**：更新本项目后端时：
 
-1. 本机 `main` 合入后 **rsync** `backend/src` + `migrations` + `docs` 到 `/srv/wool-stall-miniapp`（生产目录无 git）  
+1. 本机 `main` 合入后 **rsync** `backend/src` + `migrations` + `docs` + **`backend/public/tryon/`** 到 `/srv/wool-stall-miniapp`（生产目录无 git）。试衣页不在 `src` 里，漏同步则 `/tryon/` 仍是旧文件或 404  
 2. 服务器 `backend` 目录：`npm run build`（lock 变更时再 `npm ci`）  
 3. **仅** `pm2 restart wool-api`（或等价只重启该 name）  
 4. **不要** `pm2 restart all`，不要动其他项目进程与 Nginx 无关 server；勿覆盖 `.env` / `.secrets` / `storage`  

@@ -78,6 +78,7 @@
 
   <view class="bottom-bar">
     <view class="catalog-btn" wx:if="{{showCatalogCta}}" bindtap="goCatalog">更多</view>
+    <view class="tryon-btn" wx:if="{{tryOnAvailable}}" bindtap="openTryOn">试衣</view>
     <view class="inquire-btn" bindtap="openInquirySheet">询价</view>
   </view>
 
